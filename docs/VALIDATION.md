@@ -51,7 +51,7 @@ Fixture smoke logs: `/tmp/omapdf-cc0-{epub,multidoc,large,quality,theme}.log`.
 - Portable executable installed at `$HOME/.local/bin/omapdf`.
 - `cmp dist/omapdf $HOME/.local/bin/omapdf`: passed.
 - Installed `--version`: `Omapdf 0.0.1-alpha`.
-- Artifact SHA-256: `5aed8278020b50ecb8ddee85d34e8a6a5c716dc5445bb8ed8315d3ad38b0f69c`.
+- Artifact SHA-256: `092752042e2ecf6a0c4566885d2d1ae0c322ab2c48d5c1223f2f07f657b8f672`.
 - Desktop entry: `$HOME/.local/share/applications/io.omapdf.desktop`, with absolute, unquoted executable paths.
 - Desktop validation and database refresh: passed.
 - Both `xdg-mime` and `gio mime` report `io.omapdf.desktop` as the default PDF handler.
@@ -98,3 +98,13 @@ adding those DSOs. GPU drivers remain host supplied.
 
 The README screenshot shows only Omapdf and an original CC0 sample, captured from
 the verified native Wayland build with isolated state and restored focus/cursor.
+
+The corrected tagged CI run passed on both architectures and republished the
+prerelease. A fresh x86-64 CI download passed checksum verification and native
+Wayland document opening without runtime modifications; the README screenshot
+was recaptured from that download. The matching local portable build was backed
+up and installed atomically, and its installed `cmp`/version checks passed.
+
+The corrected x86-64 AppImage also passed a fresh native Wayland launch, bookmark
+creation, IPC and clean exit. Public release downloads match the tested CI
+artifacts byte-for-byte and pass their published SHA-256 checksums.

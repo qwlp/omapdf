@@ -10,16 +10,13 @@ your Omarchy theme.
 
 ## Why I’m making this
 
-I started Omapdf out of frustration with using Sioyek as my default PDF reader
-on Omarchy. I wanted its useful reading and research ideas in an app that felt at
-home on my Wayland desktop: smooth movement,
-a small, coherent interface, straightforward settings and fewer distractions
-between opening a document and reading it.
+I started Omapdf after getting frustrated with Sioyek as my default PDF reader
+on Omarchy. I liked its reading and research tools, but wanted smooth scrolling,
+a simpler interface and settings that were easier to use.
 
-I use Omarchy, and I wanted a reader I could make my default—one that follows my
-theme and font, handles both papers and books, and feels like part of the desktop.
-That is what Omapdf is for. It runs directly on Wayland and keeps document
-processing inside the app, with no Poppler or Calibre commands to install.
+Omapdf runs directly on Wayland, follows my Omarchy theme and font, and handles
+both papers and books. Document processing is built in, so there are no Poppler
+or Calibre commands to install.
 
 ## Features
 

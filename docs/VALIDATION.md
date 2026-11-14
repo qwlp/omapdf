@@ -128,3 +128,19 @@ The supported release baseline is glibc-based Ubuntu 24.04 or newer.
 - AMD RADV and Intel hardware were unavailable locally. This removes the reported
   bundled-libc ABI conflict; the separate vague Intel initialization report is
   not confirmed as a shader bug or independently verified as fixed.
+
+### Published 0.0.2 artifacts
+
+The `v0.0.2` GitHub Actions release passed native x86-64 and ARM64 builds,
+formatting, Clippy, all tests, portable runtime regression and AppImage checks.
+Both downloaded portable executables match their published SHA-256 files.
+The Ubuntu-built x86-64 download also passed the host-library/Vulkan probe and
+the full native Wayland smoke on this Arch/NVIDIA machine, with isolated state
+and restored focus/cursor. The AUR recipe uses these verified release hashes
+and explicitly depends on host glibc and GCC libraries. Package assembly and
+source verification passed for both architectures; x86-64 package extraction
+preserves the executable byte-for-byte and its desktop entry validates.
+ARM64 GUI behavior was not tested locally.
+
+The local 0.0.2 portable build was installed with a backup and atomic replacement;
+installed artifact comparison and `--version` passed.

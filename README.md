@@ -8,6 +8,38 @@ your Omarchy theme.
 
 ![Omapdf on Wayland with Omarchy document colors and a highlighted CC0 sample](docs/images/omapdf.png)
 
+## Install
+
+**Arch Linux (AUR):**
+
+```sh
+paru -S omapdf-bin
+```
+
+This installs the reader, desktop entry and icons. No build step or FUSE is
+required. Any other AUR helper works too.
+
+**Any other Linux:** download the portable executable for your architecture
+from [GitHub Releases](https://github.com/qwlp/omapdf/releases) —
+`omapdf-linux-x86_64` or `omapdf-linux-aarch64` — then:
+
+```sh
+chmod +x omapdf-linux-x86_64
+./omapdf-linux-x86_64 paper.pdf
+```
+
+AppImages such as `Omapdf-0.0.1-alpha-x86_64.AppImage` are also available.
+Mark the file executable and launch it; if FUSE is unavailable, run it with
+`--appimage-extract-and-run`. SHA-256 checksum files accompany every download.
+The current release is **0.0.1-alpha**.
+
+Both forms run on any Linux Wayland desktop and use your host GPU drivers.
+To make Omapdf your default PDF reader afterward:
+
+```sh
+xdg-mime default io.omapdf.desktop application/pdf
+```
+
 ## Why I’m making this
 
 I started Omapdf after getting frustrated with Sioyek as my default PDF reader
@@ -83,24 +115,6 @@ or Calibre commands to install.
 Outstanding features and behavioral gaps are tracked as TODOs in the
 [roadmap](docs/ROADMAP.md). The list above describes implemented functionality;
 Omapdf is still under active development.
-
-## Downloads
-
-The first release is **0.0.1-alpha**. Download the executable for your architecture
-from [GitHub Releases](https://github.com/qwlp/omapdf/releases), then make it executable:
-
-```sh
-chmod +x omapdf-linux-x86_64
-./omapdf-linux-x86_64 paper.pdf
-```
-
-AppImages are also available as `Omapdf-0.0.1-alpha-x86_64.AppImage` and
-`Omapdf-0.0.1-alpha-aarch64.AppImage`. Mark the file executable and launch it.
-If FUSE is unavailable, run it with `--appimage-extract-and-run`.
-
-For ARM64, use `omapdf-linux-aarch64`. Release downloads are portable executables
-with bundled document processing and user-space libraries. They require a Linux
-Wayland desktop and host GPU drivers. SHA-256 checksum files accompany each build.
 
 ## Build and run
 

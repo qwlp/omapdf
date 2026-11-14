@@ -164,3 +164,17 @@ Local 0.0.3 validation:
 - Portable PDF/EPUB inspection and the full Wayland window smoke script passed.
 - The portable executable was installed with a backup and atomic replacement;
   byte comparison passed and the installed executable reports Omapdf 0.0.3.
+
+Published 0.0.3 validation:
+
+- Both native GitHub Actions architecture builds and the release job passed,
+  including GPU enumeration through Mesa software drivers and AppImage checks.
+- Downloaded x86-64 and ARM64 executables/AppImages match their published
+  SHA-256 checksum files. The source archive checksum was recorded for AUR.
+- The published Ubuntu-built x86-64 executable passes the host-library/GPU
+  probe on this desktop, and its AppImage reports Omapdf 0.0.3.
+- The updated AUR recipe explicitly depends on host Wayland, passes source
+  checksum verification, and builds an x86-64 package successfully.
+- The downloaded x86-64 executable also passed the full isolated Wayland
+  window smoke script, with focus restored afterward.
+- AUR metadata was published as commit `0a67393` for omapdf-bin 0.0.3-1.

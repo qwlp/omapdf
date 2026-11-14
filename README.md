@@ -13,7 +13,7 @@ your Omarchy theme.
 **Arch Linux (AUR):**
 
 ```sh
-paru -S omapdf-bin
+yay -S omapdf-bin
 ```
 
 This installs the reader, desktop entry and icons. No build step or FUSE is

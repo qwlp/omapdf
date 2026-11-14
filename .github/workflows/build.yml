@@ -1,0 +1,123 @@
+name: Linux builds
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: 3
+
+jobs:
+  build:
+    name: Linux ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config clang libclang-dev cmake python3 binutils \
+            libwayland-dev libxkbcommon-dev libfontconfig1-dev libfreetype6-dev \
+            libvulkan-dev libasound2-dev libssl-dev libegl1-mesa-dev libgl1-mesa-dev \
+            xkb-data desktop-file-utils squashfs-tools
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: 1.98.1
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          key: linux-${{ matrix.arch }}
+      - name: Check formatting and lint
+        run: |
+          cargo fmt --all --check
+          cargo clippy --locked --all-targets -- -D warnings
+      - name: Run native tests
+        run: cargo test --locked
+      - name: Build release and portable executable
+        run: |
+          cargo build --release --locked
+          python3 scripts/build_portable.py
+      - name: Verify portable executable
+        run: |
+          dist/omapdf --version
+          PATH=/nonexistent dist/omapdf --inspect examples/reading-lab.pdf
+          PATH=/nonexistent dist/omapdf --inspect examples/reading-lab.epub
+          desktop-file-validate assets/io.omapdf.desktop
+      - name: Build AppImage
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          tool="$RUNNER_TEMP/appimagetool.AppImage"
+          curl --fail --location --retry 3 \
+            "https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-${ARCH}.AppImage" \
+            --output "$tool"
+          case "$ARCH" in
+            x86_64) digest=ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0 ;;
+            aarch64) digest=f0837e7448a0c1e4e650a93bb3e85802546e60654ef287576f46c71c126a9158 ;;
+          esac
+          echo "$digest  $tool" | sha256sum --check
+          chmod +x "$tool"
+          python3 scripts/build_appimage.py --appimagetool "$tool"
+          APPIMAGE_EXTRACT_AND_RUN=1 dist/Omapdf-*-${ARCH}.AppImage --version
+          APPIMAGE_EXTRACT_AND_RUN=1 dist/Omapdf-*-${ARCH}.AppImage --inspect examples/reading-lab.pdf
+      - name: Prepare download
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          mkdir -p artifacts
+          cp dist/omapdf "artifacts/omapdf-linux-${ARCH}"
+          cp dist/Omapdf-*-${ARCH}.AppImage artifacts/
+          cd artifacts
+          for asset in omapdf-linux-* *.AppImage; do
+            sha256sum "$asset" > "$asset.sha256"
+          done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: omapdf-linux-${{ matrix.arch }}
+          path: artifacts/*
+          if-no-files-found: error
+
+  release:
+    name: Publish tagged release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          flags=()
+          if [[ "$RELEASE_TAG" == *-* ]]; then flags+=(--prerelease); fi
+          gh release create "$RELEASE_TAG" artifacts/* \
+            --verify-tag --title "Omapdf ${RELEASE_TAG#v}" \
+            --generate-notes "${flags[@]}"

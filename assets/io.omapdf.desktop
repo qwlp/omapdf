@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Omapdf
+GenericName=PDF and EPUB Reader
+Comment=Read and annotate PDFs and EPUB books
+Exec=omapdf %f
+TryExec=omapdf
+Icon=io.omapdf
+Terminal=false
+Categories=Office;Viewer;
+MimeType=application/pdf;application/epub+zip;
+StartupWMClass=io.omapdf

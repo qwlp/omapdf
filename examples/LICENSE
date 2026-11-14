@@ -1,0 +1,18 @@
+SPDX-License-Identifier: CC0-1.0
+
+Omapdf's original sample text, generated geometric graphics and generated document
+fixtures (reading-lab.pdf, large-reading-lab.pdf, color-chart.pdf and
+reading-lab.epub), together with scripts/generate_examples.py, are dedicated to the
+public domain under the Creative Commons CC0 1.0 Universal dedication.
+
+To the extent possible under law, the contributors waive all copyright and related
+or neighboring rights in these materials. You may copy, modify and redistribute
+them, including for commercial purposes, without asking permission.
+
+These materials are provided without warranty.
+
+CC0 1.0 Universal: https://creativecommons.org/publicdomain/zero/1.0/
+
+This dedication applies only to the fixtures and generator identified above.
+The application source, Rust example programs, fonts and dependencies retain their
+respective licenses; see ../LICENSE and ../THIRD_PARTY.md.

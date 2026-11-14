@@ -1,0 +1,11 @@
+[package]
+name = "omapdf-portable-launcher"
+version = "0.0.1-alpha"
+edition = "2024"
+license = "GPL-3.0-or-later"
+[dependencies]
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+[profile.release]
+strip = true
+lto = true
+opt-level = "s"

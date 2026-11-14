@@ -1,0 +1,6 @@
+/target/
+*.log
+
+/dist/
+/packaging/launcher/target/
+**/__pycache__/

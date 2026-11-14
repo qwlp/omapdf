@@ -1,0 +1,17 @@
+# GPUI compatibility patch
+
+Upstream: crates.io `gpui` 0.2.2, package SHA-256 `979b45cfa6ec723b6f42330915a1b3769b930d02b2d505f9697f8ca602bee707`.
+Original Apache-2.0 licensing and source notices are retained.
+
+The Wayland clipboard previously advertised only text MIME types and sent only
+text payloads even for `ClipboardEntry::Image`. `client.rs` now advertises the
+actual image MIME types (and text only when present). `clipboard.rs` sends the
+matching encoded image bytes through the asynchronous data-source writer, with
+a nonblocking descriptor so large images cannot block the UI on a slow reader.
+The selection uses the most recent keyboard or pointer serial (tracked in
+`serial.rs`), including pointer-only captures and serial-number wraparound.
+No clipboard subprocess or extra runtime dependency is introduced.
+
+The changes are in `src/platform/linux/wayland/client.rs` and
+`src/platform/linux/wayland/clipboard.rs`, plus input serial tracking in `serial.rs`. `scripts/region_smoke.py` exercises
+real Wayland PNG offers and checks their decoded pixels against native exports.

@@ -51,7 +51,7 @@ checksum = "3a219298ac11a56ea9a6d2120044824d6f01aeb034955e7af7bc16858527deea"
 
 [[package]]
 name = "omapdf-portable-launcher"
-version = "0.0.1-alpha"
+version = "0.0.2"
 dependencies = [
  "flate2",
 ]

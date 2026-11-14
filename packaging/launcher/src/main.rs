@@ -14,9 +14,9 @@ use std::{
     process::Command,
 };
 #[cfg(target_arch = "x86_64")]
-const LOADER: &str = "ld-linux-x86-64.so.2";
+const LOADER: &str = "/lib64/ld-linux-x86-64.so.2";
 #[cfg(target_arch = "aarch64")]
-const LOADER: &str = "ld-linux-aarch64.so.1";
+const LOADER: &str = "/lib/ld-linux-aarch64.so.1";
 #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 compile_error!("Portable builds support Linux x86-64 and ARM64");
 const PAYLOAD: &[u8] = include_bytes!(env!("OMAPDF_PORTABLE_PAYLOAD"));
@@ -105,7 +105,14 @@ fn run() -> io::Result<()> {
     }
     drop(lock);
     let libraries = root.join("lib");
-    let mut command = Command::new(libraries.join(LOADER));
+    // Host ICDs/layers need the host glibc ABI. The loader and all glibc DSOs
+    // must stay together; using a bundled loader with host libc is unsafe too.
+    if !Path::new(LOADER).is_file() {
+        return Err(io::Error::other(format!(
+            "Host glibc loader {LOADER} is required (musl systems are unsupported)"
+        )));
+    }
+    let mut command = Command::new(LOADER);
     command
         .arg("--library-path")
         .arg(&libraries)

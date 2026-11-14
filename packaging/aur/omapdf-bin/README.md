@@ -3,17 +3,13 @@
 This recipe repackages the upstream portable executable for x86-64 and ARM64.
 It installs the reader, desktop entry, icons, and license notices under `/usr`.
 The executable retains its embedded runtime and third-party notices; it needs
-host GPU drivers and a Wayland session. No Rust build or FUSE is required.
+host glibc, GCC runtime, GPU drivers and a Wayland session. No Rust build or FUSE is required.
 
 ## Release prerequisite
 
-The `v0.0.1-alpha` release is currently a GitHub draft. Its executables have
-been downloaded through authenticated GitHub access and both SHA-256 digests
-verified. The source archive is already public. Publish the existing release
-with these exact assets before submitting this recipe to AUR. Do not replace
-release assets without updating the checksums.
-
-The Arch version `0.0.1alpha` corresponds to upstream `0.0.1-alpha`.
+Publish the tagged GitHub release and verify both architecture downloads before
+updating this recipe. Do not replace release assets without updating checksums.
+The package uses the upstream version directly for stable releases.
 
 ## Build and check
 
@@ -40,7 +36,7 @@ git clone ssh://aur@aur.archlinux.org/omapdf-bin.git /tmp/omapdf-bin-aur
 cp PKGBUILD .SRCINFO /tmp/omapdf-bin-aur/
 cd /tmp/omapdf-bin-aur
 git add PKGBUILD .SRCINFO
-git commit -m 'Initial omapdf-bin package'
+git commit -m 'Update omapdf-bin to 0.0.2'
 git push origin master
 ```
 

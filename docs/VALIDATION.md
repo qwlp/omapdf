@@ -91,7 +91,7 @@ Alpha logs: `/tmp/omapdf-alpha-{clippy,tests,release,portable,appimage,install}.
 The first Ubuntu-built portable download failed on an Arch/NVIDIA Wayland host
 because a driver dlopen selected the host's newer `libdl.so.2` alongside bundled
 Ubuntu libc. Vulkan reported `GLIBC_ABI_DT_X86_64_PLT` missing and no supported GPU.
-The portable builder now includes the matching libc compatibility DSOs (`libdl`,
+That release added the matching libc compatibility DSOs (`libdl`,
 `libpthread`, `librt`, `libutil`, `libresolv`) explicitly. An isolated reproduction
 using the exact Ubuntu libc package passed the real Wayland settings smoke after
 adding those DSOs. GPU drivers remain host supplied.
@@ -108,3 +108,23 @@ up and installed atomically, and its installed `cmp`/version checks passed.
 The corrected x86-64 AppImage also passed a fresh native Wayland launch, bookmark
 creation, IPC and clean exit. Public release downloads match the tested CI
 artifacts byte-for-byte and pass their published SHA-256 checksums.
+
+
+## 0.0.2 host GPU ABI fix
+
+Supersedes the bundled-glibc workaround above. Host Vulkan ICDs and layers can
+require a newer glibc ABI than the build machine provides. The portable builder
+now excludes the ELF loader, all glibc companions and GCC runtime libraries;
+the launcher uses the host loader so drivers share the host libc/libm/libgcc.
+The supported release baseline is glibc-based Ubuntu 24.04 or newer.
+
+- Formatting, Clippy and 76 native tests passed (Unix socket access required).
+- Portable regression confirms extracted artifacts contain no loader/glibc/GCC
+  DSOs and the launched reader actually initializes the host libc/libm/libgcc.
+- Vulkan instance creation and physical-device enumeration passed on NVIDIA.
+- Native Wayland portable smoke passed rendering, scrolling, IPC and clean quit;
+  desktop focus and cursor restored, isolated settings/library/cache removed.
+- Portable PDF/EPUB inspection passed with `PATH=/nonexistent`.
+- AMD RADV and Intel hardware were unavailable locally. This removes the reported
+  bundled-libc ABI conflict; the separate vague Intel initialization report is
+  not confirmed as a shader bug or independently verified as fixed.

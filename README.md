@@ -28,10 +28,10 @@ chmod +x omapdf-linux-x86_64
 ./omapdf-linux-x86_64 paper.pdf
 ```
 
-AppImages such as `Omapdf-0.0.1-alpha-x86_64.AppImage` are also available.
+AppImages such as `Omapdf-0.0.2-x86_64.AppImage` are also available.
 Mark the file executable and launch it; if FUSE is unavailable, run it with
 `--appimage-extract-and-run`. SHA-256 checksum files accompany every download.
-The current release is **0.0.1-alpha**.
+The current release is **0.0.2**.
 
 Both forms run on any Linux Wayland desktop and use your host GPU drivers.
 To make Omapdf your default PDF reader afterward:
@@ -139,7 +139,20 @@ python3 scripts/build_portable.py
 Or use `make portable` to run both steps. Portable packaging uses `ldd` and
 `readelf` to collect the local user-space runtime. On first launch, the executable
 extracts a private, versioned runtime under `$XDG_CACHE_HOME/omapdf/runtime`.
-The host supplies the Wayland compositor, GPU drivers and desktop portals.
+The host supplies glibc and its ELF loader, the GCC runtime, the Wayland
+compositor, GPU drivers and desktop portals. The portable runtime deliberately
+excludes glibc (including libm) and GCC libraries so current Mesa/Intel/AMD
+Vulkan drivers use the same system ABI as other applications. A glibc-based
+Linux distribution at least as new as the build baseline (Ubuntu 24.04 for
+release downloads) is required; musl-only distributions are unsupported.
+
+Check portable library resolution with `python3 scripts/portable_runtime_smoke.py`.
+Add `--gpu` to also exercise Vulkan instance creation and host ICD/layer loading
+under the reader's exact library search path (requires a C compiler). A real window smoke test additionally exercises GPUI shader pipelines:
+`python3 scripts/wayland_smoke.py --binary ./dist/omapdf examples/reading-lab.pdf`.
+A shader compilation failure can have a separate cause from ICD loading; capture
+`VK_LOADER_DEBUG=all RUST_LOG=info RUST_BACKTRACE=full ./dist/omapdf paper.pdf`
+when reporting one, together with `vulkaninfo --summary` and the driver version.
 
 To install the portable build and desktop entry for your user:
 

@@ -6,7 +6,7 @@ MuPDF and its enabled document libraries are statically linked. Bundled URW base
 
 GPUI 0.2.2 retains its Apache-2.0 license. Its source is vendored under `vendor/gpui` with a native Wayland image-clipboard patch; the original license and patch provenance are included under `licenses/gpui` in the portable runtime. JetBrainsMono Nerd Font is bundled under the SIL Open Font License (`assets/fonts/OFL.txt`). Noto Sans regular, medium, and bold are bundled under the SIL Open Font License (`assets/fonts/Noto-OFL.txt`). Icons retain their Lucide/Feather notices (`assets/icons/LICENSE`). `vendor/xattr` retains its original MIT/Apache notices.
 
-The portable executable includes the ELF loader and the userspace libraries listed in `dist/runtime-manifest.txt`, with their available system-package notices in `licenses/runtime`. They are loaded from the private extracted runtime. Hardware-specific GPU drivers and the Wayland compositor are supplied by the host and are not redistributed.
+The portable executable includes the userspace libraries listed in `dist/runtime-manifest.txt`, with their available system-package notices in `licenses/runtime`. They are loaded from the private extracted runtime. The ELF loader, glibc libraries, GCC runtime, hardware-specific GPU drivers and Wayland compositor are supplied by the host and are not redistributed.
 
 Library migration statically links SQLite through `rusqlite` 0.32.1 and
 `libsqlite3-sys` 0.30.1 with the bundled feature. The Rust bindings retain their

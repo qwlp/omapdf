@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Build one static launcher containing the native reader and its user-space runtime.
-Host Wayland compositor, Vulkan ICD/GPU drivers, kernel and desktop portals remain external.
+Host glibc/ELF loader, GCC runtime, Wayland compositor, GPU drivers and portals remain external.
 """
 import gzip,hashlib,os,pathlib,platform,struct,subprocess,tomllib
 root=pathlib.Path(__file__).resolve().parent.parent
@@ -27,9 +27,19 @@ def library(name):
             candidate=pathlib.Path(words[-1])
             if candidate.is_file():return candidate
     raise SystemExit('Required runtime library not found: '+name)
-# Host GPU drivers can dlopen the glibc compatibility DSOs even when modern
-# application binaries no longer list them in DT_NEEDED. Keep them with libc.
-queue=[binary]+[library(name) for name in ['libwayland-client.so.0','libwayland-cursor.so.0','libxkbcommon.so.0','libfontconfig.so.1','libfreetype.so.6','libvulkan.so.1','libdl.so.2','libpthread.so.0','librt.so.1','libutil.so.1','libresolv.so.2']]
+# GPU ICDs/layers are dlopened into the reader's process. They must share the
+# host's loader and glibc (including libm and compatibility DSOs). Bundling only
+# an older libc, or mixing a host libc with a bundled loader/libm, is unsafe.
+# GCC's runtime must also come from the host: Mesa/LLVM may need newer symbol
+# versions than the build machine's libgcc_s/libstdc++ provides.
+def host_library(name):
+    return (name == loader or name in {
+        'libc.so.6', 'libm.so.6', 'libmvec.so.1', 'libdl.so.2',
+        'libpthread.so.0', 'librt.so.1', 'libutil.so.1', 'libresolv.so.2',
+        'libanl.so.1', 'libBrokenLocale.so.1', 'libthread_db.so.1',
+        'libgcc_s.so.1', 'libstdc++.so.6',
+    } or name.startswith('libnss_'))
+queue=[binary]+[library(name) for name in ['libwayland-client.so.0','libwayland-cursor.so.0','libxkbcommon.so.0','libfontconfig.so.1','libfreetype.so.6','libvulkan.so.1']]
 seen=set()
 while queue:
     source=queue.pop()
@@ -43,14 +53,14 @@ while queue:
         path=next((pathlib.Path(word) for word in words if word.startswith('/') and pathlib.Path(word).is_file()),None)
         if path:
             soname=words[0] if '=>' in words else path.name
-            files['lib/'+soname]=path.resolve();queue.append(path)
+            if not host_library(soname):
+                files['lib/'+soname]=path.resolve();queue.append(path)
     if source!=binary.resolve():
         # Add dlopen roots under their public SONAME, independent of versioned filenames.
         soname=subprocess.check_output(['readelf','-d',str(source)],text=True)
         import re
         match=re.search(r'\(SONAME\).*\[(.*?)\]',soname)
-        if match:files['lib/'+match[1]]=source
-files['lib/'+loader]=library(loader).resolve()
+        if match and not host_library(match[1]):files['lib/'+match[1]]=source
 for path in [root/'LICENSE',root/'THIRD_PARTY.md',root/'assets/AGPL-3.0.txt',root/'assets/icons/LICENSE',root/'assets/fonts/OFL.txt',root/'assets/fonts/Droid-NOTICE',root/'assets/fonts/Noto-OFL.txt']:
     name=path.name if path.parent==root else str(path.relative_to(root)).replace('/','-')
     files['licenses/'+name]=path

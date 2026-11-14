@@ -61,6 +61,7 @@ jobs:
           python3 scripts/build_portable.py
       - name: Verify portable executable
         run: |
+          python3 scripts/portable_runtime_smoke.py
           dist/omapdf --version
           PATH=/nonexistent dist/omapdf --inspect examples/reading-lab.pdf
           PATH=/nonexistent dist/omapdf --inspect examples/reading-lab.epub

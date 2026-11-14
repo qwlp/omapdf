@@ -144,3 +144,23 @@ ARM64 GUI behavior was not tested locally.
 
 The local 0.0.2 portable build was installed with a backup and atomic replacement;
 installed artifact comparison and `--version` passed.
+
+## 0.0.3 host Wayland ABI fix
+
+The reported 0.0.2 RADV failure required `wl_display_create_queue_with_name`
+and `wl_fixes_interface`, missing from the bundled Wayland client library.
+Packaging now excludes all Wayland libraries and the Vulkan loader so host
+Mesa ICDs/layers resolve against their system libraries. The extracted-artifact
+regression rejects these libraries, and GPU probing checks actual dlopened
+library paths. CI also runs Vulkan enumeration using Mesa software drivers.
+
+Local 0.0.3 validation:
+
+- Formatting and Clippy passed (existing vendored GPUI warnings remain).
+- All 29 unit tests and 47 integration tests passed with local socket access.
+- The updated runtime regression rejects the installed 0.0.2 artifact.
+- The rebuilt portable artifact passes host-library checks and Vulkan GPU
+  enumeration (one NVIDIA GPU on this machine; AMD user confirmation pending).
+- Portable PDF/EPUB inspection and the full Wayland window smoke script passed.
+- The portable executable was installed with a backup and atomic replacement;
+  byte comparison passed and the installed executable reports Omapdf 0.0.3.

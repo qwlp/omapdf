@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.0.3
+
+- Fix startup with current Mesa/RADV drivers requiring Wayland symbols such as
+  `wl_display_create_queue_with_name` and `wl_fixes_interface`.
+- Use host Wayland libraries and the host Vulkan loader instead of bundling
+  older copies that can shadow driver dependencies.
+- Extend extracted-runtime regression checks to reject bundled Wayland and
+  Vulkan libraries.
+
 ## 0.0.2
 
 - Fix portable startup failures when current host Vulkan drivers require glibc

@@ -40,7 +40,7 @@ jobs:
             build-essential pkg-config clang libclang-dev cmake python3 binutils \
             libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev libfontconfig1-dev libfreetype6-dev \
             libvulkan-dev libasound2-dev libssl-dev libegl1-mesa-dev libgl1-mesa-dev \
-            xkb-data desktop-file-utils squashfs-tools
+            xkb-data desktop-file-utils squashfs-tools mesa-vulkan-drivers
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: 1.98.1
@@ -61,7 +61,7 @@ jobs:
           python3 scripts/build_portable.py
       - name: Verify portable executable
         run: |
-          python3 scripts/portable_runtime_smoke.py
+          python3 scripts/portable_runtime_smoke.py --gpu
           dist/omapdf --version
           PATH=/nonexistent dist/omapdf --inspect examples/reading-lab.pdf
           PATH=/nonexistent dist/omapdf --inspect examples/reading-lab.epub

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Build one static launcher containing the native reader and its user-space runtime.
-Host glibc/ELF loader, GCC runtime, Wayland compositor, GPU drivers and portals remain external.
+Host glibc/ELF loader, GCC runtime, Wayland libraries, Vulkan loader, GPU drivers and portals remain external.
 """
 import gzip,hashlib,os,pathlib,platform,struct,subprocess,tomllib
 root=pathlib.Path(__file__).resolve().parent.parent
@@ -30,6 +30,8 @@ def library(name):
 # GPU ICDs/layers are dlopened into the reader's process. They must share the
 # host's loader and glibc (including libm and compatibility DSOs). Bundling only
 # an older libc, or mixing a host libc with a bundled loader/libm, is unsafe.
+# Mesa also uses Wayland client/protocol symbols; keep the entire Wayland
+# library family and Vulkan loader on the host to match its drivers/layers.
 # GCC's runtime must also come from the host: Mesa/LLVM may need newer symbol
 # versions than the build machine's libgcc_s/libstdc++ provides.
 def host_library(name):
@@ -38,6 +40,8 @@ def host_library(name):
         'libpthread.so.0', 'librt.so.1', 'libutil.so.1', 'libresolv.so.2',
         'libanl.so.1', 'libBrokenLocale.so.1', 'libthread_db.so.1',
         'libgcc_s.so.1', 'libstdc++.so.6',
+        'libwayland-client.so.0', 'libwayland-cursor.so.0',
+        'libwayland-egl.so.1', 'libwayland-server.so.0', 'libvulkan.so.1',
     } or name.startswith('libnss_'))
 queue=[binary]+[library(name) for name in ['libwayland-client.so.0','libwayland-cursor.so.0','libxkbcommon.so.0','libfontconfig.so.1','libfreetype.so.6','libvulkan.so.1']]
 seen=set()

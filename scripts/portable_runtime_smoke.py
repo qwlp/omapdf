@@ -36,6 +36,8 @@ with tempfile.TemporaryDirectory(prefix='omapdf-runtime-test-') as temporary:
             'libpthread.so.0', 'librt.so.1', 'libutil.so.1', 'libresolv.so.2',
             'libanl.so.1', 'libBrokenLocale.so.1', 'libthread_db.so.1',
             'libgcc_s.so.1', 'libstdc++.so.6',
+            'libwayland-client.so.0', 'libwayland-cursor.so.0',
+            'libwayland-egl.so.1', 'libwayland-server.so.0', 'libvulkan.so.1',
         }, path
     # LD_DEBUG records the files actually initialized, unlike search attempts.
     initialized = [line.split('calling init:', 1)[1].strip()
@@ -45,7 +47,7 @@ with tempfile.TemporaryDirectory(prefix='omapdf-runtime-test-') as temporary:
         assert loaded, (soname, result.stderr)
         assert all(str(runtime) not in path for path in loaded), loaded
     assert 'version lookup error' not in result.stderr, result.stderr
-    print('Portable reader uses host libc, libm and libgcc; no bundled glibc/loader/GCC DSOs')
+    print('Portable reader uses host libc, libm and libgcc; no bundled glibc/loader/GCC/Wayland/Vulkan DSOs')
     if args.gpu:
         source = temporary / 'vulkan-probe.c'
         source.write_text(r'''
@@ -94,8 +96,16 @@ int main(void) {
         subprocess.run(['cc', str(source), '-ldl', '-o', str(probe)], check=True)
         # Use precisely the reader's loader and library search path. This tests
         # dlopened ICDs/layers, which --version and ldd alone cannot exercise.
-        env.pop('LD_DEBUG')
+        # Keep dynamic-linker tracing to verify dlopened host libraries too.
         env['LD_LIBRARY_PATH'] = str(runtime / 'lib')
         env['VK_LOADER_DEBUG'] = 'error,warn'
-        subprocess.run([loader, '--library-path', str(runtime / 'lib'), str(probe)],
-                       env=env, check=True, timeout=60)
+        result = subprocess.run(
+            [loader, '--library-path', str(runtime / 'lib'), str(probe)],
+            env=env, text=True, capture_output=True, timeout=60)
+        assert result.returncode == 0, result.stderr
+        for line in result.stderr.splitlines():
+            if 'calling init:' in line:
+                path = line.split('calling init:', 1)[1].strip()
+                if pathlib.Path(path).name.startswith(('libwayland-', 'libvulkan.so')):
+                    assert str(runtime) not in path, path
+        print(result.stdout.strip())

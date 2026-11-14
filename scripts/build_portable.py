@@ -27,7 +27,9 @@ def library(name):
             candidate=pathlib.Path(words[-1])
             if candidate.is_file():return candidate
     raise SystemExit('Required runtime library not found: '+name)
-queue=[binary]+[library(name) for name in ['libwayland-client.so.0','libwayland-cursor.so.0','libxkbcommon.so.0','libfontconfig.so.1','libfreetype.so.6','libvulkan.so.1']]
+# Host GPU drivers can dlopen the glibc compatibility DSOs even when modern
+# application binaries no longer list them in DT_NEEDED. Keep them with libc.
+queue=[binary]+[library(name) for name in ['libwayland-client.so.0','libwayland-cursor.so.0','libxkbcommon.so.0','libfontconfig.so.1','libfreetype.so.6','libvulkan.so.1','libdl.so.2','libpthread.so.0','librt.so.1','libutil.so.1','libresolv.so.2']]
 seen=set()
 while queue:
     source=queue.pop()

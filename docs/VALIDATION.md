@@ -85,3 +85,16 @@ Linux x86-64 and ARM64 runners; tagged versions publish portable executables,
 AppImages and SHA-256 files after both builds succeed.
 
 Alpha logs: `/tmp/omapdf-alpha-{clippy,tests,release,portable,appimage,install}.log`.
+
+## Published-runtime GPU regression
+
+The first Ubuntu-built portable download failed on an Arch/NVIDIA Wayland host
+because a driver dlopen selected the host's newer `libdl.so.2` alongside bundled
+Ubuntu libc. Vulkan reported `GLIBC_ABI_DT_X86_64_PLT` missing and no supported GPU.
+The portable builder now includes the matching libc compatibility DSOs (`libdl`,
+`libpthread`, `librt`, `libutil`, `libresolv`) explicitly. An isolated reproduction
+using the exact Ubuntu libc package passed the real Wayland settings smoke after
+adding those DSOs. GPU drivers remain host supplied.
+
+The README screenshot shows only Omapdf and an original CC0 sample, captured from
+the verified native Wayland build with isolated state and restored focus/cursor.

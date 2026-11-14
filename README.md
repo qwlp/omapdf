@@ -6,6 +6,8 @@ A native Wayland PDF and EPUB reader for Linux, built in Rust with GPUI and MuPD
 Keyboard navigation, smooth scrolling, research tools and an interface that follows
 your Omarchy theme.
 
+![Omapdf on Wayland with Omarchy document colors and a highlighted CC0 sample](docs/images/omapdf.png)
+
 ## Why I’m making this
 
 I started Omapdf out of frustration with using Sioyek as my default PDF reader

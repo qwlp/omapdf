@@ -1,0 +1,6 @@
+/src/
+/pkg/
+/omapdf-*.tar.gz
+/omapdf-*-x86_64
+/omapdf-*-aarch64
+/*.pkg.tar.*

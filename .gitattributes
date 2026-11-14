@@ -1,0 +1,8 @@
+*.pdf binary
+*.epub binary
+*.png binary
+*.ttf binary
+*.gz binary
+# Preserve third-party source/license formatting.
+vendor/** -whitespace
+assets/fonts/** -whitespace

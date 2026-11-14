@@ -50,8 +50,8 @@ Fixture smoke logs: `/tmp/omapdf-cc0-{epub,multidoc,large,quality,theme}.log`.
 
 - Portable executable installed at `$HOME/.local/bin/omapdf`.
 - `cmp dist/omapdf $HOME/.local/bin/omapdf`: passed.
-- Installed `--version`: `Omapdf 0.1.0`.
-- Artifact SHA-256: `7a471fc4dbf36b6328611dc9c8b5b7af4ff7d362d687a8e3cef6d7a9be9c489f`.
+- Installed `--version`: `Omapdf 0.0.1-alpha`.
+- Artifact SHA-256: `5aed8278020b50ecb8ddee85d34e8a6a5c716dc5445bb8ed8315d3ad38b0f69c`.
 - Desktop entry: `$HOME/.local/share/applications/io.omapdf.desktop`, with absolute, unquoted executable paths.
 - Desktop validation and database refresh: passed.
 - Both `xdg-mime` and `gio mime` report `io.omapdf.desktop` as the default PDF handler.
@@ -71,3 +71,17 @@ notes. Other embedded types remain in source/exported PDFs. Legacy JSON imports
 do not apply native deletion records. Removing an embedded annotation from the
 library does not erase its pixels in the source PDF; export and reopen a new PDF
 to view the revised document. Further feature work is tracked in the roadmap.
+
+## Alpha publication packaging
+
+Version `0.0.1-alpha` has passed formatting, Clippy and all 76 native Rust tests.
+The architecture-aware portable builder passes local x86-64 packaging and CLI
+inspection. The AppImage wraps the same portable executable and passes local
+version and EPUB inspection checks without FUSE via extraction mode. A native
+Wayland AppImage smoke also passed document opening, bookmark creation, IPC and
+clean exit with isolated state and restored focus. Workflow
+syntax is checked with actionlint 1.7.12. GitHub CI builds and tests on native
+Linux x86-64 and ARM64 runners; tagged versions publish portable executables,
+AppImages and SHA-256 files after both builds succeed.
+
+Alpha logs: `/tmp/omapdf-alpha-{clippy,tests,release,portable,appimage,install}.log`.

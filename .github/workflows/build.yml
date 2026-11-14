@@ -38,7 +38,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential pkg-config clang libclang-dev cmake python3 binutils \
-            libwayland-dev libxkbcommon-dev libfontconfig1-dev libfreetype6-dev \
+            libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev libfontconfig1-dev libfreetype6-dev \
             libvulkan-dev libasound2-dev libssl-dev libegl1-mesa-dev libgl1-mesa-dev \
             xkb-data desktop-file-utils squashfs-tools
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
@@ -48,6 +48,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: linux-${{ matrix.arch }}
+          save-if: ${{ !cancelled() }}
       - name: Check formatting and lint
         run: |
           cargo fmt --all --check

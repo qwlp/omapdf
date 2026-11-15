@@ -89,7 +89,12 @@ fn main() -> anyhow::Result<()> {
             .unwrap_or_else(|| PathBuf::from("."))
             .join("omapdf")
     });
-    omapdf::config::Config::load(&config_path)?;
+    let config = omapdf::config::Config::load(&config_path)?;
+    std::thread::spawn(omapdf::appearance::Appearance::load);
+    let prepared = request
+        .file
+        .clone()
+        .map(|path| reader::PreparedOpen::new(path, config.epub));
     Application::new()
         .with_assets(omapdf::appearance::Icons)
         .run(move |cx: &mut App| {
@@ -120,7 +125,8 @@ fn main() -> anyhow::Result<()> {
                     ..Default::default()
                 });
             }
-            let handle = workspace::open_window(library, config_path, initial, cx);
+            let handle =
+                workspace::open_window_prepared(library, config_path, initial, prepared, cx);
             cx.spawn(async move |cx| {
                 loop {
                     cx.background_executor()

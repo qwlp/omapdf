@@ -94,7 +94,9 @@ for source in set(files.values()):
             if notice.is_file():files['licenses/runtime/'+package.replace(':','-')+'/copyright']=notice
 # Retain available license/notice texts for every locked Rust dependency,
 # including the bundled SQLite migration engine and its Rust bindings.
-for package in tomllib.loads((root/'Cargo.lock').read_text()).get('package',[]):
+locked_packages = [package for lock in [root/'Cargo.lock',root/'packaging/launcher/Cargo.lock']
+                   for package in tomllib.loads(lock.read_text()).get('package',[])]
+for package in locked_packages:
     for directory in registry.glob('*/'+package['name']+'-'+package['version']):
         for path in directory.iterdir():
             if path.name.upper().startswith(('LICENSE','LICENCE','COPYING','NOTICE','COPYRIGHT')):
@@ -109,8 +111,10 @@ for directory in [pathlib.Path('/usr/share/X11/xkb'),pathlib.Path('/usr/share/X1
 files['fonts/ReaderMono.ttf']=root/'assets/fonts/ReaderMono.ttf'
 for weight in ['Regular','Medium','Bold']:
     files['fonts/ReaderSans-'+weight+'.ttf']=root/('assets/fonts/ReaderSans-'+weight+'.ttf')
+# The host config already supplies system/user directories. Repeating them
+# makes fontdb scan every font twice. Keep only the additional bundled directory.
 # A relative font directory is resolved relative to this fontconfig file.
-fonts=b'''<?xml version="1.0"?><!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd"><fontconfig><include ignore_missing="yes">/etc/fonts/fonts.conf</include><dir prefix="relative">fonts</dir><dir>/usr/share/fonts</dir><dir prefix="xdg">fonts</dir><cachedir prefix="xdg">fontconfig</cachedir><alias><family>sans-serif</family><prefer><family>Noto Sans</family></prefer></alias><alias><family>monospace</family><prefer><family>JetBrainsMono NF</family></prefer></alias></fontconfig>'''
+fonts=b'''<?xml version="1.0"?><!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd"><fontconfig><include ignore_missing="yes">/etc/fonts/fonts.conf</include><dir prefix="relative">fonts</dir><cachedir prefix="xdg">fontconfig</cachedir><alias><family>sans-serif</family><prefer><family>Noto Sans</family></prefer></alias><alias><family>monospace</family><prefer><family>JetBrainsMono NF</family></prefer></alias></fontconfig>'''
 records={name:path.read_bytes() for name,path in files.items()};records['fonts.conf']=fonts
 payload=output/'portable-payload.gz'
 with gzip.GzipFile(filename=str(payload),mode='wb',mtime=0,compresslevel=9) as archive:

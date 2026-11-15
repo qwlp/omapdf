@@ -446,6 +446,9 @@ fn wl_output_version(version: u32) -> u32 {
 
 impl WaylandClient {
     pub(crate) fn new() -> Self {
+        // Vulkan device discovery is independent of Wayland and font discovery.
+        // Start it first so the three startup costs overlap rather than add up.
+        let gpu_context = std::thread::spawn(BladeContext::new);
         let conn = Connection::connect_to_env().unwrap();
 
         let (globals, mut event_queue) =
@@ -498,7 +501,10 @@ impl WaylandClient {
             })
             .unwrap();
 
-        let gpu_context = BladeContext::new().expect("Unable to init GPU context");
+        let gpu_context = gpu_context
+            .join()
+            .expect("GPU initialization thread panicked")
+            .expect("Unable to init GPU context");
 
         let seat = seat.unwrap();
         let globals = Globals::new(

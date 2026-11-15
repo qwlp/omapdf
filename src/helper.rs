@@ -13,7 +13,10 @@ impl Render for Helper {
         div()
             .id("portal-helper")
             .size_full()
-            .overflow_y_scroll()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .overflow_hidden()
             .bg(rgb(self.appearance.background))
             .text_color(rgb(self.appearance.foreground))
             .font_family(self.appearance.font.clone())
@@ -21,7 +24,19 @@ impl Render for Helper {
             .p_4()
             .child(self.title.clone())
             .when_some(self.image.clone(), |view, image| {
-                view.child(img(image).w_full())
+                let image_size = image.size(0);
+                let scale = ((f32::from(window.viewport_size().width) - 32.).max(1.)
+                    / image_size.width.0.max(1) as f32)
+                    .min(
+                        (f32::from(window.viewport_size().height) - 64.).max(1.)
+                            / image_size.height.0.max(1) as f32,
+                    );
+                view.child(
+                    img(image)
+                        .flex_shrink_0()
+                        .w(px(image_size.width.0 as f32 * scale))
+                        .h(px(image_size.height.0 as f32 * scale)),
+                )
             })
     }
 }

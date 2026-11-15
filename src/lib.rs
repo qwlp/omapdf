@@ -6,6 +6,7 @@ pub mod config;
 pub mod context_menu;
 pub mod document;
 pub mod document_theme;
+mod fingerprint;
 pub mod highlight;
 pub mod interchange;
 pub mod ipc;

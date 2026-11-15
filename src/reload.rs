@@ -1,7 +1,7 @@
 //! Stable revision detection for in-place writes and atomic file replacement.
 use std::{fs::Metadata, path::Path, time::SystemTime};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Revision {
     modified: Option<SystemTime>,
     length: u64,

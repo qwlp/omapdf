@@ -4,8 +4,8 @@ version = "0.0.4"
 edition = "2024"
 license = "GPL-3.0-or-later"
 [dependencies]
-flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+flate2 = { version = "1", default-features = false, features = ["zlib-rs", "runtime_detection"] }
 [profile.release]
 strip = true
 lto = true
-opt-level = "s"
+opt-level = 3

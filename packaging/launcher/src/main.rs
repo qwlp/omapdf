@@ -25,7 +25,9 @@ unsafe extern "C" {
     fn flock(fd: i32, operation: i32) -> i32;
 }
 fn unpack(root: &Path) -> io::Result<()> {
-    let mut decoder = GzDecoder::new(PAYLOAD);
+    // Decode large chunks even while reading tiny archive headers/license files.
+    // Small output slices otherwise keep inflate and checksum work on slow paths.
+    let mut decoder = io::BufReader::with_capacity(256 * 1024, GzDecoder::new(PAYLOAD));
     loop {
         let mut length = [0u8; 4];
         decoder.read_exact(&mut length)?;

@@ -1,8 +1,6 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::{
-    io::Read,
     ops::Deref,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock},
@@ -344,23 +342,19 @@ impl Document {
             .with_context(|| format!("Cannot open {}", path.display()))?;
         let mut file = std::fs::File::open(&path)?;
         let revision = crate::reload::Revision::from_metadata(&file.metadata()?);
-        let mut hash = Sha256::new();
-        let mut buffer = [0u8; 65536];
-        loop {
-            let count = file.read(&mut buffer)?;
-            if count == 0 {
-                break;
-            }
-            hash.update(&buffer[..count]);
-        }
+        let cache = dirs::cache_dir().map(|path| path.join("omapdf/fingerprints-v1"));
+        let (content_id, reflow_id) = crate::fingerprint::document_ids(
+            &mut file,
+            &path,
+            revision,
+            &serde_json::to_vec(&options)?,
+            cache.as_deref(),
+        )?;
         let access = native_access(options)?;
         let native = open_native(&path, options, &access, password.as_deref())
             .with_context(|| format!("Cannot read {}", path.display()))?;
         let reflowable = native.is_reflowable()?;
-        if reflowable {
-            hash.update(serde_json::to_vec(&options)?);
-        }
-        let id = format!("{:x}", hash.finalize());
+        let id = if reflowable { reflow_id } else { content_id };
         let title = native
             .metadata(mupdf::MetadataName::Title)
             .ok()
@@ -395,7 +389,7 @@ impl Document {
                 words: SharedVec::default(),
                 links: SharedVec::default(),
             };
-            if eager || reflowable || index == 0 {
+            if eager || index == 0 {
                 Self::extract_page(&native, index as usize, &content)?;
             }
             pages.push(content);

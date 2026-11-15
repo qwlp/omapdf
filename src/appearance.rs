@@ -1,6 +1,6 @@
 //! Read Omarchy's active palette and font without changing desktop configuration.
 use gpui::{AssetSource, SharedString};
-use std::{collections::BTreeMap, time::SystemTime};
+use std::{collections::BTreeMap, sync::OnceLock, time::SystemTime};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Appearance {
@@ -33,7 +33,12 @@ impl Default for Appearance {
 }
 impl Appearance {
     pub fn load() -> Self {
-        Self::default().refresh(true)
+        // Resolve the host font once per process. The main thread starts this
+        // during platform initialization; additional tabs only check for changes.
+        static INITIAL: OnceLock<Appearance> = OnceLock::new();
+        INITIAL
+            .get_or_init(|| Self::default().refresh(true))
+            .refresh(false)
     }
     pub fn refresh(&self, force_font: bool) -> Self {
         let mut next = self.clone();

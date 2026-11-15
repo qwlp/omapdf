@@ -1,4 +1,4 @@
-use crate::reader::{Reader, Startup};
+use crate::reader::{PreparedOpen, Reader, Startup};
 use gpui::{prelude::*, *};
 use omapdf::{config::Config, ipc::Request, state::Library};
 use std::{path::PathBuf, sync::mpsc};
@@ -16,6 +16,16 @@ pub fn open_window(
     library: PathBuf,
     config: PathBuf,
     requests: Vec<Request>,
+    cx: &mut App,
+) -> WindowHandle<Workspace> {
+    open_window_prepared(library, config, requests, None, cx)
+}
+
+pub fn open_window_prepared(
+    library: PathBuf,
+    config: PathBuf,
+    requests: Vec<Request>,
+    mut prepared: Option<PreparedOpen>,
     cx: &mut App,
 ) -> WindowHandle<Workspace> {
     cx.open_window(
@@ -45,7 +55,7 @@ pub fn open_window(
                 };
                 for request in requests {
                     if workspace.tabs.is_empty() {
-                        workspace.add(request, window, cx);
+                        workspace.add_prepared(request, prepared.take(), window, cx);
                     } else {
                         workspace.receive(request, window, cx);
                     }
@@ -83,6 +93,16 @@ pub fn open_window(
 
 impl Workspace {
     fn add(&mut self, request: Request, window: &mut Window, cx: &mut Context<Self>) {
+        self.add_prepared(request, None, window, cx);
+    }
+
+    fn add_prepared(
+        &mut self,
+        request: Request,
+        prepared: Option<PreparedOpen>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let (sender, requests) = mpsc::channel();
         let config = Config::load(&self.config).unwrap_or_default();
         let reader = cx.new(|cx| {
@@ -95,6 +115,7 @@ impl Workspace {
                     page: request.page,
                     commands: request.commands,
                     requests,
+                    prepared,
                 },
                 window,
                 cx,

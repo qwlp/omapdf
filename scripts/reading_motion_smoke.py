@@ -53,14 +53,45 @@ with tempfile.TemporaryDirectory(prefix='omapdf-motion-') as temporary:
         remote('goto 2');jump=frames();wait(lambda:document()['page']==1)
         signatures={hashlib.sha256(frame.crop((0,80,frame.width,frame.height-40)).tobytes()).hexdigest() for frame in jump}
         assert len(signatures)>=3, 'page jump had no intermediate fade frames'
+        # Revisit cached destinations without scrolling or any other repaint trigger.
+        def page_pixels():
+            frame=capture()
+            return frame.crop(((frame.width-600)//2,82,(frame.width+600)//2,min(850,frame.height-80))).tobytes()
+        time.sleep(.4);last_page=page_pixels()
+        remote('goto_beginning');time.sleep(.4);first_page=page_pixels()
+        assert first_page!=last_page, 'fixture pages must look different'
+        for _ in range(4):
+            dispatch('hl.dsp.send_shortcut({window='+json.dumps(address)+',mods="SHIFT",key="g"})')
+            time.sleep(.5)
+            assert document()['page']==1, f'Shift+G did not navigate: {document()["page"]}'
+            actual=page_pixels()
+            assert actual==last_page, f'Shift+G left a stale page snapshot ({sum(a!=b for a,b in zip(actual,last_page))} different channels)'
+            for _ in range(2):
+                dispatch('hl.dsp.send_shortcut({window='+json.dumps(address)+',mods="",key="g"})')
+            time.sleep(.5)
+            assert document()['page']==0 and page_pixels()==first_page, 'gg left a stale page snapshot'
         remote('fit_to_page_width');time.sleep(.4)
         baseline=capture()
         def white_width(frame):return max(sum(min(frame.getpixel((x,y)))>245 for x in range(frame.width)) for y in [90,100,110])
         start=white_width(baseline);remote('zoom_in');zoom=frames();finish=white_width(zoom[-1])
         widths=[white_width(frame) for frame in zoom]
         assert finish>start+50 and any(start+5<w<finish-5 for w in widths), f'zoom snapped instead of interpolating: {start=} {widths=}'
+        remote('overview 1');time.sleep(.5)
+        preview=capture();preview.save('/tmp/omapdf-preview-layout.png')
+        # The right edge lies inside the preview page, clear of the main page.
+        white_rows=[y for y in range(90,preview.height-40) if min(preview.getpixel((preview.width-40,y)))>245]
+        assert white_rows and white_rows[0]<200 and len(white_rows)>450, f'preview is clipped or pushed below its header: {white_rows[:1]} {len(white_rows)=}'
+        remote('toggle_window_configuration')
+        wait(lambda:any(w.get('class')=='io.omapdf.helper' for w in clients()))
+        time.sleep(.6)
+        helper=next(w for w in clients() if w.get('class')=='io.omapdf.helper')
+        x,y=helper['at'];width,height=helper['size']
+        picture=Image.open(io.BytesIO(subprocess.check_output(['grim','-g',f'{x},{y} {width}x{height}','-']))).convert('RGB')
+        picture.save('/tmp/omapdf-helper-layout.png')
+        white_rows=[y for y in range(40,height-8) if min(picture.getpixel((30,y)))>245]
+        assert white_rows and white_rows[0]<150 and len(white_rows)>200, 'helper page is clipped or displaced'
         remote('quit');process.wait(timeout=5);assert process.returncode==0
-        print('PASS: soft line highlight fills word gaps, page jumps have intermediate fade frames, zoom has intermediate widths, clean quit')
+        print('PASS: soft line highlight fills word gaps, page jumps have intermediate fade frames, cached gg/Shift+G jumps settle without input, zoom has intermediate widths, inline/helper previews fit their pages, clean quit')
     finally:
         if process.poll() is None:process.terminate();process.wait(timeout=5)
         dispatch('hl.dsp.cursor.move({x='+str(cursor['x'])+',y='+str(cursor['y'])+'})')

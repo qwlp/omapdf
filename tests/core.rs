@@ -348,6 +348,26 @@ fn write_pdf_stream_geometry(
 }
 
 #[test]
+fn epub_preview_defers_text_but_preserves_search_and_reflow_ids() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/reading-lab.epub");
+    let preview = Document::open_preview(&path, Default::default()).unwrap();
+    assert!(preview.reflowable);
+    assert_eq!(preview.indexed_pages(), 1);
+    let snapshot = preview.clone();
+    let full = Document::open(&path).unwrap();
+    assert_eq!(preview.id, full.id);
+    assert_eq!(preview.pages.len(), full.pages.len());
+    let target = full.find_text_near("Compilation", 0.1).unwrap();
+    assert!(target.0 > 0);
+    preview.ensure_page_text(target.0).unwrap();
+    assert!(snapshot.text_ready(target.0));
+    assert_eq!(preview.pages[target.0].text(), full.pages[target.0].text());
+    let matches = omapdf::search::find(&preview, "Compilation", Default::default()).unwrap();
+    assert!(!matches.is_empty());
+    assert_eq!(snapshot.indexed_pages(), snapshot.pages.len());
+}
+
+#[test]
 fn original_epub_fixture_has_native_text_links_contents_and_reflow_anchors() {
     use omapdf::{document::EpubOptions, state::Location};
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/reading-lab.epub");

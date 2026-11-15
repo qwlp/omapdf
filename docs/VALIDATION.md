@@ -200,3 +200,16 @@ Local x86-64 validation on 2026-11-15:
 These are local checks. Version-tag publishing and ARM64 CI verification are
 separate steps. The AUR recipe remains on the last published, checksum-verified
 release until 0.0.4 downloads are available.
+
+## 0.0.4 final local release checks
+
+- All 32 unit tests and 48 integration tests passed; local Unix-socket tests ran
+  outside the restricted sandbox.
+- Formatting, Clippy, and whitespace checks passed.
+- Wayland visual checks verified repeated cached `gg`/`Shift+G` jumps without
+  additional input, page/zoom animation, and fitted inline/helper preview pages.
+- Real Wayland wheel input passed notch-distance, repeated-input, and reversal
+  checks while an inline preview was open.
+- The rebuilt portable runtime passed host-library resolution and Vulkan GPU
+  enumeration. The installed portable copy matches `dist/omapdf`, reports
+  0.0.4, and was replaced atomically after backing up the previous executable.

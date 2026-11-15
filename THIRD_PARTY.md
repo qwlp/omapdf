@@ -4,7 +4,7 @@ The project source retains its GPL-3.0-or-later license. The combined executable
 
 MuPDF and its enabled document libraries are statically linked. Bundled URW base14 and Droid fallback fonts retain their upstream notices. The portable build collects MuPDF third-party license files into its runtime `licenses/mupdf` directory.
 
-GPUI 0.2.2 retains its Apache-2.0 license. Its source is vendored under `vendor/gpui` with a native Wayland image-clipboard patch; the original license and patch provenance are included under `licenses/gpui` in the portable runtime. JetBrainsMono Nerd Font is bundled under the SIL Open Font License (`assets/fonts/OFL.txt`). Noto Sans regular, medium, and bold are bundled under the SIL Open Font License (`assets/fonts/Noto-OFL.txt`). Icons retain their Lucide/Feather notices (`assets/icons/LICENSE`). `vendor/xattr` retains its original MIT/Apache notices.
+GPUI 0.2.2 retains its Apache-2.0 license. Its source is vendored under `vendor/gpui` with native Wayland image-clipboard and startup patches; the original license and patch provenance are included under `licenses/gpui` in the portable runtime. JetBrainsMono Nerd Font is bundled under the SIL Open Font License (`assets/fonts/OFL.txt`). Noto Sans regular, medium, and bold are bundled under the SIL Open Font License (`assets/fonts/Noto-OFL.txt`). Icons retain their Lucide/Feather notices (`assets/icons/LICENSE`). `vendor/xattr` retains its original MIT/Apache notices.
 
 The portable executable includes the userspace libraries listed in `dist/runtime-manifest.txt`, with their available system-package notices in `licenses/runtime`. They are loaded from the private extracted runtime. The ELF loader, glibc libraries, GCC runtime, Wayland libraries, Vulkan loader, hardware-specific GPU drivers and Wayland compositor are supplied by the host and are not redistributed.
 
@@ -16,6 +16,10 @@ only to identify legacy documents, alongside the reader’s SHA-256
 identity. RustCrypto `md-5` retains its MIT/Apache-2.0 notices, and Chrono retains
 its MIT/Apache-2.0 notices. The portable builder collects available license and
 notice texts from locked Rust dependencies under `licenses/rust`.
+
+The static portable launcher decompresses its embedded runtime with `flate2`
+and `zlib-rs`. Both retain their MIT/Apache-2.0 notices, collected from the
+launcher's lockfile under `licenses/rust`. No host zlib is required.
 
 Omapdf originated as a rewrite of ahrm/Sioyek. Preference values, key notation and
 command help were adapted from that GPL-3.0-or-later project. Upstream source and

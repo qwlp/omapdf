@@ -15,3 +15,10 @@ No clipboard subprocess or extra runtime dependency is introduced.
 The changes are in `src/platform/linux/wayland/client.rs` and
 `src/platform/linux/wayland/clipboard.rs`, plus input serial tracking in `serial.rs`. `scripts/region_smoke.py` exercises
 real Wayland PNG offers and checks their decoded pixels against native exports.
+
+Startup: Wayland Vulkan device initialization now runs concurrently with
+display/keyboard setup. Cosmic Text discovers the complete host font database
+on a worker, joining on first text use before adding bundled fonts. This
+overlaps font discovery with Vulkan initialization without replacing the font
+database or invalidating font IDs after shaping begins. No font families or
+fallbacks are removed. Changes are in `wayland/client.rs` and `text_system.rs`.

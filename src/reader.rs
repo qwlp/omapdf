@@ -75,8 +75,10 @@ struct UnlockRequest {
 
 pub struct Reader {
     focus: FocusHandle,
+    window: AnyWindowHandle,
     config: Config,
     appearance: Appearance,
+    prepared: Option<PreparedOpen>,
     editing_setting: Option<String>,
     editing_highlight: Option<(String, Highlight)>,
     settings_message: String,
@@ -207,6 +209,23 @@ pub struct Startup {
     pub page: Option<usize>,
     pub commands: Vec<String>,
     pub requests: std::sync::mpsc::Receiver<omapdf::ipc::Request>,
+    pub prepared: Option<PreparedOpen>,
+}
+
+/// Start the initial document while GPUI initializes its display and GPU.
+pub struct PreparedOpen {
+    path: PathBuf,
+    worker: std::thread::JoinHandle<anyhow::Result<Document>>,
+}
+
+impl PreparedOpen {
+    pub fn new(path: PathBuf, options: omapdf::document::EpubOptions) -> Self {
+        let source = path.clone();
+        Self {
+            path,
+            worker: std::thread::spawn(move || Document::open_preview(&source, options)),
+        }
+    }
 }
 
 impl Reader {
@@ -219,6 +238,7 @@ impl Reader {
             page,
             commands: startup_commands,
             requests,
+            prepared,
         } = startup;
         let focus = cx.focus_handle();
         focus.focus(window);
@@ -238,8 +258,10 @@ impl Reader {
         motion.set_response(config.scroll_response);
         let mut reader = Self {
             focus,
+            window: window.window_handle(),
             dark: config.dark,
             appearance,
+            prepared,
             editing_setting: None,
             editing_highlight: None,
             settings_message: String::new(),
@@ -412,17 +434,7 @@ impl Reader {
                         }
                         // Dispatch independently of paint: hidden Wayland windows may not
                         // receive frames, but settings and IPC commands must still execute.
-                        while !this.loading
-                            && this.pending_unlock.is_none()
-                            && !this.region_mode
-                            && this.prompt != Some(Prompt::Open)
-                            && !this.search_busy
-                            && this.annotation_busy == 0
-                            && !this.startup_commands.is_empty()
-                        {
-                            let command = this.startup_commands.remove(0);
-                            this.execute(&command, window, cx);
-                        }
+                        this.run_startup_commands(window, cx);
                         if this.search_busy {
                             cx.notify();
                         }
@@ -565,7 +577,24 @@ impl Reader {
             }
         })
         .detach();
+        cx.defer_in(window, |this, window, cx| {
+            this.run_startup_commands(window, cx)
+        });
         reader
+    }
+
+    fn run_startup_commands(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        while !self.loading
+            && self.pending_unlock.is_none()
+            && !self.region_mode
+            && self.prompt != Some(Prompt::Open)
+            && !self.search_busy
+            && self.annotation_busy == 0
+            && !self.startup_commands.is_empty()
+        {
+            let command = self.startup_commands.remove(0);
+            self.execute(&command, window, cx);
+        }
     }
 
     fn persist(&mut self) -> bool {
@@ -656,13 +685,46 @@ impl Reader {
         self.set_status(format!("Opening {}…", path.display()));
         let options = self.config.epub;
         let pending_path = path.clone();
+        let prepared = self
+            .prepared
+            .take()
+            .filter(|prepared| prepared.path == path && password.is_none());
+        let previous = self.document.clone();
         let task = cx.background_executor().spawn(async move {
-            match password {
-                Some(password) => Document::unlock_preview(&path, options, password),
-                None => Document::open_preview(&path, options),
+            let document = match (prepared, password) {
+                (Some(prepared), _) => {
+                    let result = prepared
+                        .worker
+                        .join()
+                        .map_err(|_| anyhow::anyhow!("Initial document worker failed"))?;
+                    match result {
+                        Ok(doc)
+                            if omapdf::reload::Revision::read(&path).ok() == Some(doc.revision)
+                                && doc.epub_options == options =>
+                        {
+                            Ok(doc)
+                        }
+                        Ok(_) => Document::open_preview(&path, options),
+                        Err(error) => Err(error),
+                    }
+                }
+                (None, Some(password)) => Document::unlock_preview(&path, options, password),
+                (None, None) => Document::open_preview(&path, options),
+            }?;
+            // Reflow migration needs text anchors from both versions. Ordinary
+            // EPUB opens remain lazy; perform migration indexing off the UI thread.
+            if let Some(previous) = previous
+                && previous.path == document.path
+                && previous.id != document.id
+                && previous.reflowable
+                && document.reflowable
+            {
+                previous.ensure_all_text()?;
+                document.ensure_all_text()?;
             }
-            .map(Arc::new)
+            Ok::<_, anyhow::Error>(Arc::new(document))
         });
+        let reader_window = self.window;
         cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
@@ -856,6 +918,15 @@ impl Reader {
                 }
                 cx.notify();
             });
+            // Loading completion is an event: initial commands need not wait
+            // for the periodic IPC/settings housekeeping timer.
+            let _ = reader_window.update(cx, |_, window, cx| {
+                this.update(cx, |this, cx| {
+                    if this.open_generation == generation {
+                        this.run_startup_commands(window, cx);
+                    }
+                })
+            });
         })
         .detach();
         cx.notify();
@@ -1047,10 +1118,13 @@ impl Reader {
         let rasterizer = self.rasterizer.clone();
         let dark = self.dark;
         let executor = cx.background_executor().clone();
+        let debounce = !self.raster_images.is_empty();
         let task = cx.spawn(async move |this, cx| {
             // Keep the existing image during resize/zoom bursts; only the latest
             // settled size should enter the native renderer's work queue.
-            executor.timer(std::time::Duration::from_millis(24)).await;
+            if debounce {
+                executor.timer(std::time::Duration::from_millis(24)).await;
+            }
             let result = executor
                 .spawn(async move { rasterizer.render(doc, page, width, dark) })
                 .await;
@@ -6109,16 +6183,6 @@ impl Render for Reader {
             now,
             enabled,
         );
-        let page_ready = !self.rasters_dirty && self.raster_images.contains_key(&self.page);
-        let page_opacity = if let Some(jump) = &mut self.page_jump {
-            let ready = page_ready || now.duration_since(jump.created).as_secs_f32() > 1.;
-            jump.fade.update(if ready { 1. } else { 0. }, now, enabled)
-        } else {
-            1.
-        };
-        if page_opacity >= 1. {
-            self.page_jump = None;
-        }
 
         if self.panel.is_some() {
             self.presented_panel = self.panel;
@@ -6165,14 +6229,6 @@ impl Render for Reader {
         }
         if preview_opacity == 0. && self.preview.is_none() {
             self.presented_preview = None;
-        }
-        self.ui_animating |= self
-            .page_jump
-            .as_ref()
-            .is_some_and(|jump| jump.fade.active(now));
-        self.ui_animating |= self.toast_transition.active(now);
-        if self.ui_animating {
-            self.request_scroll_frame(window, cx);
         }
         let padding = self.config.page_padding;
         let available = (f32::from(window.viewport_size().width) - padding * 2.).max(150.);
@@ -6387,6 +6443,25 @@ impl Render for Reader {
                 )
                 .child(self.tool("welcome-recent", "Recent documents", "recent", false, cx))
                 .into_any_element();
+        }
+        // Cache hits are installed while constructing page_view. Check readiness
+        // afterwards so a warm-cache jump starts its fade in this same frame.
+        let page_ready = !self.rasters_dirty && self.raster_images.contains_key(&self.page);
+        let page_opacity = if let Some(jump) = &mut self.page_jump {
+            let ready = page_ready || now.duration_since(jump.created).as_secs_f32() > 1.;
+            jump.fade.update(if ready { 1. } else { 0. }, now, enabled)
+        } else {
+            1.
+        };
+        if page_opacity >= 1. {
+            self.page_jump = None;
+        }
+        // Keep ticking while awaiting a raster too, so the timeout can release
+        // the outgoing snapshot even if rendering fails without another event.
+        self.ui_animating |= self.page_jump.is_some();
+        self.ui_animating |= self.toast_transition.active(now);
+        if self.ui_animating {
+            self.request_scroll_frame(window, cx);
         }
         let title = self
             .document
@@ -6785,20 +6860,33 @@ impl Render for Reader {
                     None
                 },
                 |view, (page, image)| {
+                    let image_size = image.size(0);
+                    let scale = ((viewport_width - 56.).clamp(1., 396.)
+                        / image_size.width.0.max(1) as f32)
+                        .min((viewport_height - 92.).max(1.) / image_size.height.0.max(1) as f32);
+                    let image_width = image_size.width.0 as f32 * scale;
+                    let image_height = image_size.height.0 as f32 * scale;
                     view.child(
                         div()
                             .absolute()
                             .opacity(preview_opacity)
                             .right_4()
                             .top(px(64. + 8. * (1. - preview_opacity)))
-                            .w(px(420.))
-                            .max_h(px(680.))
+                            .flex()
+                            .flex_col()
+                            .gap_3()
+                            .w(px(image_width + 24.))
                             .overflow_hidden()
                             .bg(rgb(self.appearance.panel))
                             .p_3()
                             .shadow_lg()
                             .child(format!("Overview · page {} · Escape to close", page + 1))
-                            .child(img(image).w_full()),
+                            .child(
+                                img(image)
+                                    .flex_shrink_0()
+                                    .w(px(image_width))
+                                    .h(px(image_height)),
+                            ),
                     )
                 },
             )
@@ -6998,7 +7086,6 @@ impl Render for Reader {
                                             && this.panel.is_none()
                                             && this.context_menu.is_none()
                                             && !this.layout_menu
-                                            && this.preview.is_none()
                                         {
                                             this.wheel(event, window, cx);
                                         }

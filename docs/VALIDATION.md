@@ -213,3 +213,21 @@ release until 0.0.4 downloads are available.
 - The rebuilt portable runtime passed host-library resolution and Vulkan GPU
   enumeration. The installed portable copy matches `dist/omapdf`, reports
   0.0.4, and was replaced atomically after backing up the previous executable.
+
+## 0.0.4 published release and AUR
+
+- Release tag `v0.0.4` points to `64891a7`; all application changes are on main.
+- Tagged GitHub Actions run `43720384604` passed x86-64 and ARM64 formatting,
+  Clippy, native tests, release/portable builds, host-runtime/GPU probes, and
+  AppImage build/CLI checks. Main's corresponding run also passed.
+- GitHub release `v0.0.4` is published as the latest stable release, with portable
+  executables and AppImages for both architectures and SHA-256 manifests.
+- All four public asset downloads match their published SHA-256 checksums.
+  The downloaded x86-64 portable executable and AppImage report 0.0.4; the
+  portable executable inspects the PDF fixture and passes host-library/GPU
+  runtime verification on this machine.
+- Updated `omapdf-bin` to 0.0.4-1 using the verified tagged source archive and
+  architecture-specific binary hashes. Source validation and a local x86-64
+  package build passed; the packaged executable matches the public release
+  download and the desktop entry validates.
+- AUR update commit: `e25d436`.

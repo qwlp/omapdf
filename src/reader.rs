@@ -137,6 +137,7 @@ pub struct Reader {
     geometry: Option<PageLayout>,
     layout_menu: bool,
     tracking_scroll: bool,
+    scrollbar_grab: Option<f32>,
     scroll_save_pending: bool,
     visual_mark: Option<omapdf::visual::Mark>,
     visual_scroll: bool,
@@ -299,6 +300,7 @@ impl Reader {
             geometry: None,
             layout_menu: false,
             tracking_scroll: false,
+            scrollbar_grab: None,
             scroll_save_pending: false,
             visual_mark: None,
             visual_scroll: false,
@@ -1523,6 +1525,7 @@ impl Reader {
                 self.menu_motions[index].cancel();
             }
             self.menu_motions[index].set_response(self.config.scroll_response);
+            self.menu_motions[index].classic_wheel_glide = self.config.wheel_scroll_glide;
             self.menu_motions[index].queue_wheel(current, distance, limit);
             self.menu_offsets[index] = Some(current);
             self.menu_time.get_or_insert_with(std::time::Instant::now);
@@ -1699,6 +1702,7 @@ impl Reader {
             self.motion.cancel();
         }
         let queued = if wheel {
+            self.motion.classic_wheel_glide = self.config.wheel_scroll_glide;
             self.motion.queue_wheel(current, distance, limit)
         } else {
             self.motion.queue(current, distance, limit)
@@ -1722,6 +1726,49 @@ impl Reader {
             }
             cx.notify();
         }
+    }
+
+    fn scrollbar_metrics(&self) -> (bool, f32, f32, f32, f32) {
+        let horizontal = self.config.layout == LayoutMode::Horizontal;
+        let length = self.viewport_size[if horizontal { 0 } else { 1 }].max(1.);
+        let limit = f32::from(if horizontal {
+            self.scroll.max_offset().width
+        } else {
+            self.scroll.max_offset().height
+        })
+        .max(0.);
+        let thumb = (length * length / (length + limit)).max(28.).min(length);
+        let offset = self.scroll.offset();
+        let current = -f32::from(if horizontal { offset.x } else { offset.y });
+        let position = if limit > 0. {
+            current.clamp(0., limit) / limit * (length - thumb)
+        } else {
+            0.
+        };
+        (horizontal, length, thumb, position, limit)
+    }
+
+    fn drag_scrollbar(&mut self, pointer: Point<Pixels>, cx: &mut Context<Self>) {
+        let Some(grab) = self.scrollbar_grab else {
+            return;
+        };
+        let (horizontal, length, thumb, _, limit) = self.scrollbar_metrics();
+        let coordinate = if horizontal {
+            f32::from(pointer.x)
+        } else {
+            f32::from(pointer.y) - self.viewport_origin[1]
+        };
+        let fraction = ((coordinate - grab) / (length - thumb).max(1.)).clamp(0., 1.);
+        let offset = self.scroll.offset();
+        self.motion.cancel();
+        self.scroll.set_offset(if horizontal {
+            point(px(-fraction * limit), offset.y)
+        } else {
+            point(offset.x, px(-fraction * limit))
+        });
+        self.tracking_scroll = true;
+        self.scroll_save_pending = true;
+        cx.notify();
     }
 
     fn page_edge(&mut self, horizontal: bool, end: bool) {
@@ -6285,7 +6332,27 @@ impl Render for Reader {
                         .top(px(padding + page.y))
                         .w(px(page.width))
                         .h(px(page.height))
-                        .child(self.page_element(page.page, page.width, cx)),
+                        .child(self.page_element(page.page, page.width, cx))
+                        .when(
+                            self.config.page_separators && page.page + 1 < doc.pages.len(),
+                            |view| {
+                                view.child(
+                                    div()
+                                        .absolute()
+                                        .bg(rgb(self.appearance.border))
+                                        .when(
+                                            mode == LayoutMode::Horizontal
+                                                || mode == LayoutMode::Spread,
+                                            |line| line.right_0().top_0().w(px(1.)).h_full(),
+                                        )
+                                        .when(
+                                            mode != LayoutMode::Horizontal
+                                                && mode != LayoutMode::Spread,
+                                            |line| line.bottom_0().left_0().h(px(1.)).w_full(),
+                                        ),
+                                )
+                            },
+                        ),
                 );
             }
             self.geometry = Some(layout);
@@ -6400,6 +6467,10 @@ impl Render for Reader {
                 }
             }))
             .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, window, cx| {
+                if this.scrollbar_grab.is_some() {
+                    this.drag_scrollbar(event.position, cx);
+                    return;
+                }
                 if this.region_mode && this.region_drag.is_some() {
                     if let Ok(region) = this.region_plan(event.position, window.scale_factor()) {
                         this.region_selection =
@@ -6409,6 +6480,10 @@ impl Render for Reader {
                 }
             }))
             .capture_any_mouse_up(cx.listener(|this, event: &MouseUpEvent, window, cx| {
+                if event.button == MouseButton::Left && this.scrollbar_grab.take().is_some() {
+                    cx.stop_propagation();
+                    cx.notify();
+                }
                 if this.region_mode && event.button == MouseButton::Left {
                     this.finish_region(event.position, window, cx);
                     cx.stop_propagation();
@@ -6417,6 +6492,7 @@ impl Render for Reader {
             .on_mouse_up_out(
                 MouseButton::Left,
                 cx.listener(|this, event: &MouseUpEvent, window, cx| {
+                    this.scrollbar_grab = None;
                     if this.region_mode {
                         this.finish_region(event.position, window, cx);
                     }
@@ -6635,6 +6711,69 @@ impl Render for Reader {
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             this.change_setting("page_layout", mode.name(), cx)
                                         }))
+                                }),
+                        ),
+                )
+            })
+            .when(self.config.scrollbar && self.document.is_some(), |view| {
+                let (horizontal, length, thumb, position, limit) = self.scrollbar_metrics();
+                if limit <= 0. {
+                    return view;
+                }
+                view.child(
+                    div()
+                        .id("document-scrollbar")
+                        .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
+                            if this.scrollbar_grab.is_some() {
+                                this.drag_scrollbar(event.position, cx);
+                                cx.stop_propagation();
+                            }
+                        }))
+                        .absolute()
+                        .bg(rgb(self.appearance.panel))
+                        .when(horizontal, |bar| {
+                            bar.left_0().bottom_0().w(px(length)).h(px(12.))
+                        })
+                        .when(!horizontal, |bar| {
+                            bar.right_0().top(px(36.)).h(px(length)).w(px(12.))
+                        })
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                                let coordinate = if horizontal {
+                                    f32::from(event.position.x)
+                                } else {
+                                    f32::from(event.position.y) - 66.
+                                };
+                                this.scrollbar_grab = Some(
+                                    if coordinate >= position && coordinate <= position + thumb {
+                                        coordinate - position
+                                    } else {
+                                        thumb / 2.
+                                    },
+                                );
+                                this.drag_scrollbar(event.position, cx);
+                                cx.stop_propagation();
+                            }),
+                        )
+                        .child(
+                            div()
+                                .absolute()
+                                .rounded_md()
+                                .bg(rgb(self.appearance.muted))
+                                .when(horizontal, |thumb_view| {
+                                    thumb_view
+                                        .left(px(position))
+                                        .top(px(3.))
+                                        .w(px(thumb))
+                                        .h(px(6.))
+                                })
+                                .when(!horizontal, |thumb_view| {
+                                    thumb_view
+                                        .top(px(position))
+                                        .left(px(3.))
+                                        .h(px(thumb))
+                                        .w(px(6.))
                                 }),
                         ),
                 )

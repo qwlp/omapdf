@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Deliver real Wayland wheel events; ensure one animated distance per notch, not a native jump plus animation."""
 import argparse,json,pathlib,select,subprocess,tempfile,time
-parser=argparse.ArgumentParser();parser.add_argument('--binary',default='target/debug/omapdf');args=parser.parse_args()
+parser=argparse.ArgumentParser();parser.add_argument('--binary',default='target/debug/omapdf');parser.add_argument('--classic',action='store_true');args=parser.parse_args()
 def hypr(*args):return subprocess.check_output(['hyprctl',*args],text=True)
 def dispatch(expr):return hypr('eval','hl.dispatch('+expr+')')
 prior=json.loads(hypr('activewindow','-j')).get('address');cursor=json.loads(hypr('cursorpos','-j'))
 with tempfile.TemporaryDirectory(prefix='omapdf-wheel-') as temporary:
     root=pathlib.Path(temporary);config=root/'config';config.mkdir();library=root/'library.json'
-    (config/'prefs_user.config').write_text('page_layout vertical\nmax_page_width 800\nsmooth_scroll 1\n')
+    (config/'prefs_user.config').write_text('page_layout vertical\nmax_page_width 800\nsmooth_scroll 1\nwheel_scroll_glide '+str(int(args.classic))+'\n')
     xml=next((pathlib.Path.home()/'.cargo/registry/src').glob('*/wayland-protocols-wlr-*/wlr-protocols/unstable/wlr-virtual-pointer-unstable-v1.xml'))
     subprocess.run(['wayland-scanner','client-header',str(xml),str(root/'virtual-pointer-client.h')],check=True)
     subprocess.run(['wayland-scanner','private-code',str(xml),str(root/'virtual-pointer.c')],check=True)

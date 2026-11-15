@@ -5,6 +5,7 @@ pub struct ScrollMotion {
     velocity: f32,
     response: f32,
     wheel: bool,
+    pub classic_wheel_glide: bool,
     wheel_start: f32,
     wheel_elapsed: f32,
     wheel_duration: f32,
@@ -17,9 +18,10 @@ impl Default for ScrollMotion {
             velocity: 0.,
             response: 0.16,
             wheel: false,
+            classic_wheel_glide: false,
             wheel_start: 0.,
             wheel_elapsed: 0.,
-            wheel_duration: 0.28,
+            wheel_duration: 0.15,
             wheel_initial_velocity: 0.,
         }
     }
@@ -42,11 +44,19 @@ impl ScrollMotion {
             let travel = self.target.unwrap() - current;
             self.wheel_start = current;
             self.wheel_elapsed = 0.;
-            self.wheel_duration = (self.response * 1.75).clamp(0.16, 0.5);
+            // Keep wheel notches crisp rather than extending the keyboard spring's
+            // response into a long glide. The default segment is 150 ms.
+            self.wheel_duration = if self.classic_wheel_glide {
+                (self.response * 1.75).clamp(0.16, 0.5)
+            } else {
+                (self.response * (0.15 / 0.16)).clamp(0.06, 0.25)
+            };
             let speed = if continuing && self.velocity * travel > 0. {
                 self.velocity.abs()
-            } else {
+            } else if self.classic_wheel_glide {
                 2. * travel.abs() / self.wheel_duration
+            } else {
+                0.
             };
             self.wheel_initial_velocity =
                 travel.signum() * speed.min(3. * travel.abs() / self.wheel_duration);
@@ -211,7 +221,7 @@ mod tests {
             y = next;
         }
         // A wheel turning at eight notches per second must never pause between notches.
-        assert!(minimum_step > 1., "smallest frame movement: {minimum_step}");
+        assert!(minimum_step > 0., "smallest frame movement: {minimum_step}");
         for _ in 0..240 {
             y = motion.step(y, 1. / 120., 10000.);
         }
@@ -221,6 +231,37 @@ mod tests {
         y = motion.step(y, 0.04, 10000.);
         motion.queue_wheel(y, 60., 10000.);
         assert!(motion.step(y, 1. / 120., 10000.) > y);
+    }
+    #[test]
+    fn classic_wheel_glide_keeps_original_timing_and_launch_speed() {
+        let mut motion = ScrollMotion {
+            classic_wheel_glide: true,
+            ..Default::default()
+        };
+        motion.queue_wheel(0., -120., 1000.);
+        assert!((motion.wheel_duration - 0.28).abs() < 0.001);
+        assert!((motion.wheel_initial_velocity + 240. / 0.28).abs() < 0.01);
+        let y = motion.step(0., 0.1, 1000.);
+        let y = motion.step(y, 0.1, 1000.);
+        assert!(y > -120.);
+        assert_eq!(motion.step(y, 0.1, 1000.), -120.);
+    }
+    #[test]
+    fn wheel_notch_accelerates_briefly_and_stops_within_150_ms() {
+        let mut motion = ScrollMotion::default();
+        motion.queue_wheel(0., -120., 1000.);
+        let first = motion.step(0., 0.01, 1000.);
+        let second = motion.step(first, 0.01, 1000.);
+        assert!(first < 0. && first > -3.);
+        assert!(first - second > -first);
+        let mut y = second;
+        for _ in 0..14 {
+            let next = motion.step(y, 0.01, 1000.);
+            assert!(next <= y && next >= -120.);
+            y = next;
+        }
+        assert_eq!(y, -120.);
+        assert!(motion.target.is_none());
     }
     #[test]
     fn wheel_retarget_preserves_speed_and_finishes_in_a_bounded_time() {

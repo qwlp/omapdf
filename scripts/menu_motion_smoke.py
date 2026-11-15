@@ -52,7 +52,8 @@ with tempfile.TemporaryDirectory(prefix='omapdf-wheel-') as temporary:
             time.sleep(.7);settled=capture();end=settled.crop(box).tobytes()
             assert end!=start, f'{name} did not scroll'
             print(name, 'intermediate frames:',len(set(frames)-{start,end}),flush=True)
-            assert len(set(frames)-{start,end})>=2, f'{name} jumped without intermediate frames'
+            # The crisp 150 ms animation may finish during the second screenshot.
+            assert len(set(frames)-{start,end})>=1, f'{name} jumped without intermediate frames'
             settled.save('/tmp/omapdf-smooth-'+name+'.png')
             wheel(-1);time.sleep(.8)
             assert capture().crop(box).tobytes()==start, f'{name} reversal did not return to original position'

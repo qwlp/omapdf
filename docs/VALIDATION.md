@@ -178,3 +178,25 @@ Published 0.0.3 validation:
 - The downloaded x86-64 executable also passed the full isolated Wayland
   window smoke script, with focus restored afterward.
 - AUR metadata was published as commit `0a67393` for omapdf-bin 0.0.3-1.
+
+## 0.0.4 scrolling and navigation settings
+
+Local x86-64 validation on 2026-11-15:
+
+- Formatting and Clippy checks passed.
+- All 31 unit tests and 47 integration tests passed.
+- Release reader and portable launcher built as version 0.0.4.
+- Real Wayland wheel tests passed for the crisp default and classic glide,
+  including exact notch distances, repeated inputs, and reversal.
+- Navigation-aid checks passed for separator visibility, persisted toggles,
+  vertical scrollbar track clicks and thumb dragging, and horizontal navigation.
+- Menu motion checks covered settings, contents, search, reversal, and transient
+  notification behavior.
+- Portable runtime resolution passed; host Vulkan enumeration found one GPU.
+  The GPU probe requires host device access outside the agent sandbox.
+- Installed the portable artifact with a backup and atomic replacement; byte
+  comparison passed and the installed executable reports Omapdf 0.0.4.
+
+These are local checks. Version-tag publishing and ARM64 CI verification are
+separate steps. The AUR recipe remains on the last published, checksum-verified
+release until 0.0.4 downloads are available.

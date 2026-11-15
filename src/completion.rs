@@ -150,7 +150,7 @@ mod tests {
     #[test]
     fn completes_preferences_and_values_without_changing_prior_commands() {
         assert_eq!(
-            candidates("goto 12; set_preference wheel_s", &[])[0].value,
+            candidates("goto 12; set_preference wheel_scroll_m", &[])[0].value,
             "goto 12; set_preference wheel_scroll_multiplier"
         );
         let values = candidates("set_preference smooth_scroll ", &[]);

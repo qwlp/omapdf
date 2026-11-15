@@ -28,10 +28,10 @@ chmod +x omapdf-linux-x86_64
 ./omapdf-linux-x86_64 paper.pdf
 ```
 
-AppImages such as `Omapdf-0.0.3-x86_64.AppImage` are also available.
+Release AppImages use names such as `Omapdf-0.0.4-x86_64.AppImage`.
 Mark the file executable and launch it; if FUSE is unavailable, run it with
 `--appimage-extract-and-run`. SHA-256 checksum files accompany every download.
-The current release is **0.0.3**.
+The current version is **0.0.4**.
 
 Both forms run on any Linux Wayland desktop and use your host GPU drivers.
 To make Omapdf your default PDF reader afterward:
@@ -258,6 +258,16 @@ omapdf --config /path/to/settings --library /path/to/library.json paper.pdf
 
 `--execute-command` is repeatable. Additional launches forward requests to the
 running instance for that library. Separate library files allow isolated sessions.
+
+Mouse-wheel scrolling uses a short, crisp animation by default. Enable
+**Settings → Scrolling → Classic mouse-wheel glide** to restore the original
+longer animation. Under **Settings → Appearance**, **Page separators** adds thin
+lines between pages and **Scrollbar** enables click and drag navigation.
+Both appearance options default to off. The scrollbar follows horizontal strip
+layouts horizontally.
+
+These options can also be saved with `set_preference wheel_scroll_glide 1`,
+`set_preference page_separators 1`, and `set_preference scrollbar 1`.
 
 ## Continuous integration
 

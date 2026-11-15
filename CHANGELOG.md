@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.0.4
+
+- Give mouse-wheel scrolling a shorter, crisper animation with brief acceleration
+  and immediate direction changes; leave keyboard and touchpad behavior unchanged.
+- Add a Classic mouse-wheel glide setting to restore the original animation.
+- Add optional page separator lines and a draggable document scrollbar, including
+  horizontal navigation for horizontal strip layouts. Both default to off.
+- Add Wayland checks for both wheel modes, separator visibility, scrollbar clicks
+  and dragging, and saved navigation preferences.
+
 ## 0.0.3
 
 - Fix startup with current Mesa/RADV drivers requiring Wayland symbols such as

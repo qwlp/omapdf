@@ -42,7 +42,7 @@ jobs:
         run: |
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            ca-certificates curl git build-essential pkg-config clang libclang-dev cmake python3 python3-tomli binutils \
+            ca-certificates curl git build-essential pkg-config clang libclang-dev cmake python3 python3-tomli binutils file \
             libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev libfontconfig1-dev libfreetype6-dev \
             libvulkan-dev libasound2-dev libssl-dev libegl1-mesa-dev libgl1-mesa-dev \
             xkb-data desktop-file-utils squashfs-tools mesa-vulkan-drivers

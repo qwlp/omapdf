@@ -7,7 +7,12 @@ import platform
 import shutil
 import subprocess
 import tempfile
-import tomllib
+
+# Ubuntu 22.04 ships Python 3.10; use its packaged TOML backport.
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--appimagetool', required=True, type=Path)

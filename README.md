@@ -28,10 +28,10 @@ chmod +x omapdf-linux-x86_64
 ./omapdf-linux-x86_64 paper.pdf
 ```
 
-Release AppImages use names such as `Omapdf-0.0.4-x86_64.AppImage`.
+Release AppImages use names such as `Omapdf-0.0.5-x86_64.AppImage`.
 Mark the file executable and launch it; if FUSE is unavailable, run it with
 `--appimage-extract-and-run`. SHA-256 checksum files accompany every download.
-The current version is **0.0.4**.
+The current version is **0.0.5**.
 
 Both forms run on any Linux Wayland desktop and use your host GPU drivers.
 To make Omapdf your default PDF reader afterward:
@@ -143,10 +143,12 @@ The host supplies glibc and its ELF loader, the GCC runtime, Wayland libraries,
 the Vulkan loader, the Wayland compositor, GPU drivers and desktop portals. The portable runtime deliberately
 excludes glibc (including libm), GCC, Wayland and Vulkan loader libraries so
 current Mesa/Intel/AMD Vulkan drivers use the same system ABI as other applications. A glibc-based
-Linux distribution at least as new as the build baseline (Ubuntu 24.04 for
+Linux distribution at least as new as the build baseline (Ubuntu 22.04 / glibc 2.35 for
 release downloads) is required; musl-only distributions are unsupported.
 
 Check portable library resolution with `python3 scripts/portable_runtime_smoke.py`.
+Release CI builds inside Ubuntu 22.04 containers on both architectures and uses
+`--max-glibc 2.35` to check every embedded ELF file, including bundled libraries.
 Add `--gpu` to also exercise Vulkan instance creation and host ICD/layer loading
 under the reader's exact library search path (requires a C compiler). A real window smoke test additionally exercises GPUI shader pipelines:
 `python3 scripts/wayland_smoke.py --binary ./dist/omapdf examples/reading-lab.pdf`.

@@ -2,7 +2,13 @@
 """Build one static launcher containing the native reader and its user-space runtime.
 Host glibc/ELF loader, GCC runtime, Wayland libraries, Vulkan loader, GPU drivers and portals remain external.
 """
-import gzip,hashlib,os,pathlib,platform,struct,subprocess,tomllib
+import gzip,hashlib,os,pathlib,platform,struct,subprocess
+# Ubuntu 22.04 ships Python 3.10; use its packaged TOML backport.
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
+
 root=pathlib.Path(__file__).resolve().parent.parent
 output=root/'dist';output.mkdir(exist_ok=True)
 binary=root/'target/release/omapdf'
@@ -56,7 +62,9 @@ while queue:
         if 'not found' in line:raise SystemExit(line)
         path=next((pathlib.Path(word) for word in words if word.startswith('/') and pathlib.Path(word).is_file()),None)
         if path:
-            soname=words[0] if '=>' in words else path.name
+            # Newer ldd can print an absolute loader path before =>.
+            # Normalize it before applying host-library exclusions.
+            soname=pathlib.Path(words[0]).name if '=>' in words else path.name
             if not host_library(soname):
                 files['lib/'+soname]=path.resolve();queue.append(path)
     if source!=binary.resolve():

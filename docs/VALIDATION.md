@@ -1,3 +1,40 @@
+# AppImage glibc baseline correction — 2026-11-25
+
+The catalog failure for v0.0.4 comes from Ubuntu 24.04 ABI requirements in the
+embedded reader and bundled libxkbcommon, despite the static outer launcher.
+Release CI now builds and packages in Ubuntu 22.04 containers on x86-64 and
+ARM64, retaining host glibc/GCC/Wayland/Vulkan libraries. Both download formats
+are checked against GLIBC_2.35 after extraction. Packaging scripts support
+Ubuntu 22.04's Python 3.10 through the distribution's python3-tomli package.
+
+Local verification:
+
+- Formatting and Clippy passed (existing vendored dependency warnings remain).
+- All 32 unit tests and 48 integration tests passed; Unix-socket tests required
+  execution outside the sandbox.
+- Release build and portable packaging passed.
+- The updated runtime smoke check catches the existing bundled libxkbcommon's
+  GLIBC_2.38 requirement when given `--max-glibc 2.35`.
+- Full ELF scanning also exposed an absolute-loader-path variant in newer ldd
+  output. Normalizing dependency names fixes its host-library exclusion; the
+  rebuilt artifact passes recursive loader/glibc exclusion checks.
+- Local AppImage packaging passed with the workflow's checksum-verified
+  appimagetool. The resulting AppImage passed host-library checks, full ELF
+  scanning with a permissive ceiling (not a GLIBC_2.35 compatibility claim),
+  `--version`, and PDF/EPUB inspection.
+- Host library resolution and Vulkan enumeration passed (one GPU); GPU access
+  required execution outside the sandbox.
+- Native PDF and EPUB inspection passed with PATH=/nonexistent and isolated cache.
+- The installed portable executable was backed up and atomically updated;
+  byte comparison and `--version` passed. No running reader was restarted.
+
+The Ubuntu 22.04 build has not been executed locally: Docker daemon access is
+unavailable and sudo requires a password. The local artifact uses the build
+machine's newer glibc and is not an older-Ubuntu compatibility proof. Successful
+release CI and a newly published AppImage are required before catalog retesting.
+
+---
+
 # Verification — 2026-11-14
 
 ## Omapdf identity and configuration

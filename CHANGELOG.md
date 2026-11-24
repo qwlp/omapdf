@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.0.5
+
+- Build release downloads in Ubuntu 22.04 containers so the reader and bundled
+  libraries work with glibc 2.35 while continuing to use the host glibc and GPU
+  libraries. Previously, Ubuntu 24.04 builds required newer glibc symbols.
+- Normalize absolute loader paths reported by newer `ldd` versions so the
+  host ELF loader is always excluded from the package.
+- Check every embedded ELF file in portable executables and AppImages against
+  the release glibc baseline, rather than only inspecting the static launcher.
+
 ## 0.0.4
 
 - Give mouse-wheel scrolling a shorter, crisper animation with brief acceleration

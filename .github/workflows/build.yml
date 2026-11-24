@@ -30,24 +30,30 @@ jobs:
           - arch: aarch64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
+    # Keep the reader AND bundled DSOs on the oldest supported LTS ABI.
+    # The runner only hosts Docker; its libraries must never enter the payload.
+    container: ubuntu:22.04
+    defaults:
+      run:
+        shell: bash
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install native dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential pkg-config clang libclang-dev cmake python3 binutils \
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates curl git build-essential pkg-config clang libclang-dev cmake python3 python3-tomli binutils \
             libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev libfontconfig1-dev libfreetype6-dev \
             libvulkan-dev libasound2-dev libssl-dev libegl1-mesa-dev libgl1-mesa-dev \
             xkb-data desktop-file-utils squashfs-tools mesa-vulkan-drivers
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: 1.98.1
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          key: linux-${{ matrix.arch }}
+          key: linux-jammy-${{ matrix.arch }}
           save-if: 'true'
       - name: Check formatting and lint
         run: |
@@ -61,7 +67,7 @@ jobs:
           python3 scripts/build_portable.py
       - name: Verify portable executable
         run: |
-          python3 scripts/portable_runtime_smoke.py --gpu
+          python3 scripts/portable_runtime_smoke.py --gpu --max-glibc 2.35
           dist/omapdf --version
           PATH=/nonexistent dist/omapdf --inspect examples/reading-lab.pdf
           PATH=/nonexistent dist/omapdf --inspect examples/reading-lab.epub
@@ -81,6 +87,8 @@ jobs:
           echo "$digest  $tool" | sha256sum --check
           chmod +x "$tool"
           python3 scripts/build_appimage.py --appimagetool "$tool"
+          APPIMAGE_EXTRACT_AND_RUN=1 python3 scripts/portable_runtime_smoke.py \
+            --binary dist/Omapdf-*-${ARCH}.AppImage --max-glibc 2.35
           APPIMAGE_EXTRACT_AND_RUN=1 dist/Omapdf-*-${ARCH}.AppImage --version
           APPIMAGE_EXTRACT_AND_RUN=1 dist/Omapdf-*-${ARCH}.AppImage --inspect examples/reading-lab.pdf
       - name: Prepare download

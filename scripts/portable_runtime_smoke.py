@@ -8,6 +8,7 @@ import argparse
 import os
 import pathlib
 import platform
+import re
 import subprocess
 import tempfile
 
@@ -15,6 +16,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--binary', type=pathlib.Path, default=ROOT / 'dist/omapdf')
 parser.add_argument('--gpu', action='store_true')
+parser.add_argument('--max-glibc', help='Maximum permitted GLIBC symbol version (release baseline: 2.35)')
 args = parser.parse_args()
 loader = {
     'x86_64': '/lib64/ld-linux-x86-64.so.2',
@@ -29,7 +31,7 @@ with tempfile.TemporaryDirectory(prefix='omapdf-runtime-test-') as temporary:
     runtime = runtime.parent
     # Inspect the extracted artifact, not just a build-time manifest. Check all
     # glibc companions too: deleting only libc still allows an ABI mismatch.
-    for path in (runtime / 'lib').iterdir():
+    for path in (runtime / 'lib').rglob('*'):
         assert not path.name.startswith(('ld-linux', 'libnss_')), path
         assert path.name not in {
             'libc.so.6', 'libm.so.6', 'libmvec.so.1', 'libdl.so.2',
@@ -39,6 +41,26 @@ with tempfile.TemporaryDirectory(prefix='omapdf-runtime-test-') as temporary:
             'libwayland-client.so.0', 'libwayland-cursor.so.0',
             'libwayland-egl.so.1', 'libwayland-server.so.0', 'libvulkan.so.1',
         }, path
+    if args.max_glibc:
+        baseline = tuple(map(int, args.max_glibc.split('.')))
+        # The static outer launcher hides the actual ABI requirements from
+        # AppImage scanners. Inspect every ELF in the extracted payload.
+        checked = 0
+        for path in runtime.rglob('*'):
+            if not path.is_file():
+                continue
+            with path.open('rb') as source:
+                if source.read(4) != b'\x7fELF':
+                    continue
+            report = subprocess.check_output(['readelf', '--version-info', str(path)], text=True)
+            versions = {tuple(map(int, version.split('.')))
+                        for version in re.findall(r'\bGLIBC_(\d+(?:\.\d+)+)\b', report)}
+            too_new = sorted(version for version in versions if version > baseline)
+            assert not too_new, f'{path}: GLIBC requirements {too_new} exceed {args.max_glibc}'
+            assert 'GLIBC_PRIVATE' not in report, f'{path}: private glibc ABI dependency'
+            checked += 1
+        assert checked, 'No embedded ELF files found'
+        print(f'{checked} embedded ELF files require at most GLIBC_{args.max_glibc}')
     # LD_DEBUG records the files actually initialized, unlike search attempts.
     initialized = [line.split('calling init:', 1)[1].strip()
                    for line in result.stderr.splitlines() if 'calling init:' in line]

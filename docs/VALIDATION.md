@@ -28,10 +28,29 @@ Local verification:
 - The installed portable executable was backed up and atomically updated;
   byte comparison and `--version` passed. No running reader was restarted.
 
-The Ubuntu 22.04 build has not been executed locally: Docker daemon access is
-unavailable and sudo requires a password. The local artifact uses the build
-machine's newer glibc and is not an older-Ubuntu compatibility proof. Successful
-release CI and a newly published AppImage are required before catalog retesting.
+The initial Ubuntu 22.04 CI run exposed a missing `file` utility in the minimal
+container after successfully compiling the reader and portable launcher. Adding
+that packaging dependency fixed the failure.
+
+[CI run 45471811613](https://github.com/qwlp/omapdf/actions/runs/45471811613)
+passed on both architectures: formatting, Clippy, all tests, release/portable
+builds, GPU enumeration, native document inspection and AppImage packaging.
+The extracted portable and AppImage ELF checks passed the GLIBC_2.35 ceiling.
+Downloaded x86-64 artifacts passed SHA-256 verification and the same GLIBC_2.35
+checks locally; the portable also enumerated the current host GPU successfully.
+This verifies the Ubuntu-built artifact with newer host drivers as well.
+
+[Tagged release CI run 45474103857](https://github.com/qwlp/omapdf/actions/runs/45474103857)
+also passed both architecture jobs and published all eight binary/checksum assets
+for [v0.0.5](https://github.com/qwlp/omapdf/releases/tag/v0.0.5). The release is
+public, stable and selected by the latest-release API. Published x86-64 downloads
+passed checksums, GLIBC_2.35 checks and host GPU enumeration. The published portable
+was copied to `dist/omapdf` and atomically installed with a backup; byte comparison
+and `omapdf --version` confirmed the installed v0.0.5.
+
+Omapdf remains Wayland-only. The catalog's current screenshot workflow uses
+X11/Xvfb, which is a separate display-environment limitation once the glibc
+loader failure is resolved.
 
 ---
 

@@ -42,18 +42,20 @@ def library(name):
 # bundled transitive dependency must not shadow a newer driver dependency.
 # GCC's runtime must also come from the host: Mesa/LLVM may need newer symbol
 # versions than the build machine's libgcc_s/libstdc++ provides.
-def host_library(name):
-    # The keyboard extension is not a GPU driver dependency and is absent
-    # from otherwise complete X11 desktops (including the catalog runner).
-    if name == 'libxcb-xkb.so.1':return False
+def abi_library(name):
     return (name == loader or name in {
         'libc.so.6', 'libm.so.6', 'libmvec.so.1', 'libdl.so.2',
         'libpthread.so.0', 'librt.so.1', 'libutil.so.1', 'libresolv.so.2',
         'libanl.so.1', 'libBrokenLocale.so.1', 'libthread_db.so.1',
         'libgcc_s.so.1', 'libstdc++.so.6',
+    } or name.startswith('libnss_'))
+def host_library(name):
+    # The keyboard extension is absent on otherwise complete X11 desktops.
+    if name == 'libxcb-xkb.so.1':return False
+    return (abi_library(name) or name in {
         'libwayland-client.so.0', 'libwayland-cursor.so.0',
         'libwayland-egl.so.1', 'libwayland-server.so.0', 'libvulkan.so.1',
-    } or name.startswith(('libnss_', 'libxcb', 'libX', 'libbsd.so.', 'libmd.so.')))
+    } or name.startswith(('libxcb', 'libX', 'libbsd.so.', 'libmd.so.')))
 queue=[binary]+[library(name) for name in ['libwayland-client.so.0','libwayland-cursor.so.0','libxkbcommon.so.0','libxkbcommon-x11.so.0','libfontconfig.so.1','libfreetype.so.6','libvulkan.so.1']]
 seen=set()
 while queue:
@@ -78,13 +80,41 @@ while queue:
         import re
         match=re.search(r'\(SONAME\).*\[(.*?)\]',soname)
         if match and not host_library(match[1]):files['lib/'+match[1]]=source
+# CPU-only fallback: never add these libraries to the normal reader search path.
+# On driverless systems the reader execs itself with this private library path
+# and only the bundled Lavapipe ICD enabled. glibc/GCC still come from the host.
+software_override=os.environ.get('OMAPDF_LAVAPIPE_LIBRARY')
+if software_override:
+    lavapipe=pathlib.Path(software_override)
+else:
+    candidates=[pathlib.Path('/usr/lib/libvulkan_lvp.so')]
+    candidates+=list(pathlib.Path('/usr/lib').glob('*/libvulkan_lvp.so'))
+    lavapipe=next((path for path in candidates if path.is_file()),None)
+if lavapipe is None or not lavapipe.is_file():
+    raise SystemExit('CPU fallback requires Mesa Lavapipe (mesa-vulkan-drivers / vulkan-swrast)')
+files['software-vulkan/lib/libvulkan_lvp.so']=lavapipe.resolve()
+queue=[lavapipe,library('libvulkan.so.1')]
+files['software-vulkan/lib/libvulkan.so.1']=queue[-1].resolve()
+seen=set()
+while queue:
+    source=queue.pop().resolve()
+    if source in seen:continue
+    seen.add(source)
+    for line in subprocess.check_output(['ldd',str(source)],text=True).splitlines():
+        words=line.split()
+        if 'not found' in line:raise SystemExit(line)
+        path=next((pathlib.Path(word) for word in words if word.startswith('/') and pathlib.Path(word).is_file()),None)
+        if path:
+            soname=pathlib.Path(words[0]).name if '=>' in words else path.name
+            if not abi_library(soname):
+                files['software-vulkan/lib/'+soname]=path.resolve();queue.append(path)
 for path in [root/'LICENSE',root/'THIRD_PARTY.md',root/'assets/AGPL-3.0.txt',root/'assets/icons/LICENSE',root/'assets/fonts/OFL.txt',root/'assets/fonts/Droid-NOTICE',root/'assets/fonts/Noto-OFL.txt']:
     name=path.name if path.parent==root else str(path.relative_to(root)).replace('/','-')
     files['licenses/'+name]=path
 for name in ['LICENSE-APACHE','PATCHES.md']:
     files['licenses/gpui/'+name]=root/'vendor/gpui'/name
 # Include third-party license notices for bundled native and runtime code.
-for package in ['glibc','libxkbcommon','wayland','fontconfig','freetype2','vulkan-icd-loader','expat','zlib','libpng','brotli','bzip2','gcc-libs']:
+for package in ['glibc','libxkbcommon','wayland','fontconfig','freetype2','vulkan-icd-loader','expat','zlib','libpng','brotli','bzip2','gcc-libs','mesa','vulkan-swrast','llvm-libs']:
     directory=pathlib.Path('/usr/share/licenses')/package
     if directory.exists():
         for path in directory.rglob('*'):
@@ -129,6 +159,7 @@ for weight in ['Regular','Medium','Bold']:
 # A relative font directory is resolved relative to this fontconfig file.
 fonts=b'''<?xml version="1.0"?><!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd"><fontconfig><include ignore_missing="yes">/etc/fonts/fonts.conf</include><dir prefix="relative">fonts</dir><cachedir prefix="xdg">fontconfig</cachedir><alias><family>sans-serif</family><prefer><family>Noto Sans</family></prefer></alias><alias><family>monospace</family><prefer><family>JetBrainsMono NF</family></prefer></alias></fontconfig>'''
 records={name:path.read_bytes() for name,path in files.items()};records['fonts.conf']=fonts
+records['software-vulkan/icd.json']=b'{"file_format_version":"1.0.0","ICD":{"library_path":"lib/libvulkan_lvp.so","api_version":"1.3.0"}}'
 payload=output/'portable-payload.gz'
 with gzip.GzipFile(filename=str(payload),mode='wb',mtime=0,compresslevel=9) as archive:
     for name,data in sorted(records.items()):

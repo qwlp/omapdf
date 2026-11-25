@@ -3851,9 +3851,10 @@ dependencies = [
 
 [[package]]
 name = "omapdf"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "anyhow",
+ "ash",
  "chrono",
  "clap",
  "dirs 6.0.0",

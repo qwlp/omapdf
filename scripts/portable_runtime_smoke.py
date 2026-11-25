@@ -42,6 +42,16 @@ with tempfile.TemporaryDirectory(prefix='omapdf-runtime-test-') as temporary:
             'libwayland-client.so.0', 'libwayland-cursor.so.0',
             'libwayland-egl.so.1', 'libwayland-server.so.0', 'libvulkan.so.1',
         }, path
+    software = runtime / 'software-vulkan/lib'
+    assert (software / 'libvulkan_lvp.so').is_file(), 'CPU renderer is missing'
+    for path in software.iterdir():
+        assert not path.name.startswith(('ld-linux', 'libnss_')), path
+        assert path.name not in {
+            'libc.so.6', 'libm.so.6', 'libmvec.so.1', 'libdl.so.2',
+            'libpthread.so.0', 'librt.so.1', 'libutil.so.1', 'libresolv.so.2',
+            'libanl.so.1', 'libBrokenLocale.so.1', 'libthread_db.so.1',
+            'libgcc_s.so.1', 'libstdc++.so.6',
+        }, path
     if args.max_glibc:
         baseline = tuple(map(int, args.max_glibc.split('.')))
         # The static outer launcher hides the actual ABI requirements from
@@ -73,7 +83,7 @@ with tempfile.TemporaryDirectory(prefix='omapdf-runtime-test-') as temporary:
         loaded = [path for path in initialized if pathlib.Path(path).name == soname]
         assert loaded and all(str(runtime) in path for path in loaded), (soname, loaded)
     assert 'version lookup error' not in result.stderr, result.stderr
-    print('Portable reader uses host libc, libm and libgcc; no bundled glibc/loader/GCC/Wayland/X11-core/Vulkan DSOs; bundled X11 keyboard bridge')
+    print('Portable reader uses host libc, libm and libgcc; hardware path uses host graphics libraries; bundled keyboard bridge and isolated CPU renderer')
     if args.gpu:
         source = temporary / 'vulkan-probe.c'
         source.write_text(r'''

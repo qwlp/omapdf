@@ -1,5 +1,6 @@
 mod helper;
 mod reader;
+mod software_renderer;
 mod workspace;
 
 use clap::Parser;
@@ -67,6 +68,11 @@ fn main() -> anyhow::Result<()> {
         page: arguments.page.map(|p| p.saturating_sub(1)),
         commands: arguments.commands.clone(),
     };
+    if let Some(mut command) = software_renderer::fallback_command(&library)? {
+        use std::os::unix::process::CommandExt;
+        // Restart before acquiring the primary-instance lock or accepting IPC.
+        return Err(command.exec().into());
+    }
     let mut server = match omapdf::ipc::Server::start(&library, &request)? {
         omapdf::ipc::Instance::Forwarded => {
             for file in arguments.files.iter().skip(1) {

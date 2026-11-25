@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.0.8
+
+- Add a bundled Mesa Lavapipe CPU renderer for machines with no host Vulkan
+  device, including the AppImage catalog’s driverless test VM. Normal desktops
+  continue to use their host GPU drivers.
+- Restart into an isolated software-renderer library path before acquiring the
+  primary-instance lock; keep glibc and GCC libraries on the host in both modes.
+- Test offline windows with host ICD discovery disabled on both architectures
+  and on an independent Ubuntu 22.04 runtime host.
+
+The 0.0.7 release gate caught the missing host Vulkan driver and prevented its
+publication; its XCB keyboard-library fix is included here.
+
 ## 0.0.7
 
 - Bundle the XCB keyboard extension required by the X11 keyboard bridge; it is

@@ -162,6 +162,32 @@ fn single_instance_forwards_and_recovers_socket() {
             .commands,
         ["goto 3"]
     );
+    // A forwarded command must work without a display, host Vulkan device or
+    // CPU bundle: the existing reader already owns graphics initialization.
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_omapdf"))
+        .arg("--library")
+        .arg(&path)
+        .args(["--execute-command", "goto 4"])
+        .env("OMAPDF_PORTABLE_ROOT", directory.path().join("no-runtime"))
+        .env("VK_ICD_FILENAMES", directory.path().join("no-driver.json"))
+        .env("VK_DRIVER_FILES", directory.path().join("no-driver.json"))
+        .env_remove("OMAPDF_SOFTWARE_VULKAN")
+        .env_remove("DISPLAY")
+        .env_remove("WAYLAND_DISPLAY")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        receiver
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap()
+            .commands,
+        ["goto 4"]
+    );
     drop(primary);
     assert!(!path.with_extension("sock").exists());
     assert!(matches!(

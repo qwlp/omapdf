@@ -60,6 +60,7 @@ def deny_network():
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, required=True)
+    parser.add_argument('--expect-software-renderer', action='store_true')
     args = parser.parse_args()
     assert os.environ.get('DISPLAY'), 'Run this check under xvfb-run'
     with tempfile.TemporaryDirectory(prefix='omapdf-x11-offline-') as temporary:
@@ -111,6 +112,10 @@ def main():
                     time.sleep(0.2)
                 subprocess.run(['xdotool', 'getwindowgeometry', window], env=env,
                                check=True, capture_output=True, timeout=5)
+                if args.expect_software_renderer:
+                    log.flush()
+                    log.seek(0)
+                    assert 'using bundled software Vulkan renderer' in log.read(), 'CPU fallback was not selected'
                 print('X11 window opened and survived 12 seconds with IPv4/IPv6 sockets denied')
             except Exception:
                 log.flush()

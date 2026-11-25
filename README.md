@@ -28,14 +28,14 @@ chmod +x omapdf-linux-x86_64
 ./omapdf-linux-x86_64 paper.pdf
 ```
 
-Release AppImages use names such as `Omapdf-0.0.9-x86_64.AppImage`.
+Release AppImages use names such as `Omapdf-0.0.10-x86_64.AppImage`.
 Mark the file executable and launch it; if FUSE is unavailable, run it with
 `--appimage-extract-and-run`. SHA-256 checksum files accompany every download.
-The current version is **0.0.9**.
+The current version is **0.0.10**.
 
 Both forms run on Linux Wayland or X11 desktops and prefer your host GPU drivers.
 The standalone executable requires a working host Vulkan driver. The AppImage
-includes a Mesa Lavapipe CPU fallback for machines without a host Vulkan device.
+includes a Mesa Lavapipe CPU fallback for machines without a hardware Vulkan device.
 Wayland is preferred when both display environments are available.
 To make Omapdf your default PDF reader afterward:
 
@@ -154,7 +154,7 @@ Only the AppImage bundles the optional CPU renderer. Its Vulkan libraries are is
 It still uses host glibc and GCC libraries; hardware drivers and the compositor
 remain supplied by the host.
 
-Build the separate AppImage payload (requires Mesa Lavapipe on the build host):
+Build the separate AppImage payload (requires Mesa Lavapipe 25 or newer on the build host):
 
 ```sh
 python3 scripts/build_portable.py --with-software-renderer

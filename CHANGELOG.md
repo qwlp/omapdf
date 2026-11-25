@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.0.10
+
+- Use a pinned Mesa 25 backport built for Ubuntu 22.04 for the AppImage-only CPU
+  renderer; Ubuntu’s stock Mesa 23 submits frames but leaves this UI blank.
+- Prefer hardware Vulkan devices, choosing the known-good bundled CPU renderer
+  instead of an older software-only host driver.
+- Keep glibc 2.35 compatibility and the standalone executable free of CPU-renderer
+  dependencies. Validate actual UI pixels before and after X11 window resizing.
+- Retain a 60 Hz X11 repaint fallback when RandR timing discovery is unavailable.
+
+The 0.0.9 paint-check gate rejected the older Mesa stack before publication.
+
 ## 0.0.9
 
 - Drain XCB events buffered by checked requests so initial X11 map/expose events

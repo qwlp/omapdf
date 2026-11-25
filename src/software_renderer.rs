@@ -7,7 +7,7 @@ use std::{
     process::Command,
 };
 
-fn host_has_device() -> bool {
+fn host_has_hardware_device() -> bool {
     // No surfaces or application GPU resources exist yet. Destroy the probe
     // before choosing a renderer so driver dependencies cannot leak across exec.
     unsafe {
@@ -19,9 +19,13 @@ fn host_has_device() -> bool {
         let Ok(instance) = entry.create_instance(&info, None) else {
             return false;
         };
-        let available = instance
-            .enumerate_physical_devices()
-            .is_ok_and(|devices| !devices.is_empty());
+        let available = instance.enumerate_physical_devices().is_ok_and(|devices| {
+            devices.into_iter().any(|device| {
+                let properties = instance.get_physical_device_properties(device);
+                properties.device_type != vk::PhysicalDeviceType::CPU
+                    && properties.api_version >= vk::API_VERSION_1_1
+            })
+        });
         instance.destroy_instance(None);
         available
     }
@@ -52,7 +56,7 @@ pub fn fallback_command(library: &Path) -> Result<Option<Command>> {
     {
         return Ok(None);
     }
-    if host_has_device() {
+    if host_has_hardware_device() {
         return Ok(None);
     }
     let mut libraries = vec![software.join("lib")];
@@ -73,6 +77,6 @@ pub fn fallback_command(library: &Path) -> Result<Option<Command>> {
         .env("NODEVICE_SELECT", "1")
         .env("VK_LOADER_LAYERS_DISABLE", "~implicit~")
         .env("OMAPDF_SOFTWARE_VULKAN", "1");
-    eprintln!("Omapdf: using bundled software Vulkan renderer (no host Vulkan device)");
+    eprintln!("Omapdf: using bundled software Vulkan renderer (no host hardware Vulkan device)");
     Ok(Some(command))
 }

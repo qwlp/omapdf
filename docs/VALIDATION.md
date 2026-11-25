@@ -1,3 +1,174 @@
+# Final catalog validation — 0.0.10
+
+The [AppImage catalog retest passed](https://github.com/AppImage/appimage.github.io/pull/12425#issuecomment-7155145673)
+for the public `Omapdf-0.0.10-x86_64.AppImage`.
+[Catalog run 45562854378](https://github.com/AppImage/appimage.github.io/actions/runs/45562854378)
+completed successfully and captured the main window. Remaining bot suggestions
+about default dark mode and update metadata are nonblocking.
+
+[Tagged release CI](https://github.com/qwlp/omapdf/actions/runs/45561635929)
+passed both architecture jobs and the independent stock Ubuntu 22.04 runtime
+job. It checks all 80 tests, lint/formatting, glibc 2.35 compatibility, and actual
+painted window pixels before and after resizing, with Internet sockets denied.
+
+The final fix combines buffered-XCB-event draining with a pinned Jammy-built
+Mesa 25.0.7 CPU renderer. Diagnostics ruled out a missing refresh timer in the
+remaining Ubuntu failure: the old Mesa renderer submitted five nonempty scene
+batches on a 16 ms timer but produced black pixels. Replacing the older software
+stack with the Jammy backport produced 361 distinct colors before and after
+resizing, also verified with the public release download.
+
+Only AppImages bundle the CPU renderer. The published standalone is 31,978,504
+bytes (30.5 MiB), contains no CPU runtime, and uses the host GPU driver. The
+AppImage is 82,328,056 bytes (78.5 MiB). All 13 standalone and 41 AppImage embedded
+ELF files passed the GLIBC_2.35 ceiling. Hardware GPU preference, native document
+processing and host glibc/GCC use are preserved.
+
+The published x86-64 files passed SHA-256 checks. The lean standalone was copied
+to `dist/omapdf`, backed up and atomically installed at
+`/home/tsp/.local/bin/omapdf`. Byte comparison and `--version` confirmed the
+installed Omapdf 0.0.10. No running user reader was restarted.
+
+The following sections retain the investigation history for earlier builds.
+
+---
+
+# Painted X11 windows with the Jammy Mesa backport — 0.0.10
+
+The v0.0.8 catalog test successfully opened a window, but its screenshot was
+uniform black. The earlier startup check only verified visibility and survival,
+so it did not detect this. It now captures real XWD pixels before and after
+resizing to 796x570, rejecting a solid-color window.
+
+Two independent issues were identified:
+
+- Checked XCB requests could buffer map/expose events without leaving socket
+  readiness. Draining pending events before blocking and after dispatch fixed
+  painting locally with hardware and newer software drivers. The local old build
+  had one color; the corrected builds had 372/379 colors before and after resize.
+- Ubuntu's stock Mesa 23 software renderer could submit a nonempty scene but
+  produce black pixels. CI diagnostics confirmed a 16 ms refresh loop and five
+  scene batches, ruling out an absent frame timer. The same older CPU stack
+  reproduced the failure locally. Immediate and FIFO presentation modes did not
+  fix it. Replacing Mesa/LLVM/DRM with the Jammy-built Kisak stable backport made
+  that same test paint 361 colors before and after resize.
+
+Build containers now use pinned `mesa-vulkan-drivers=25.0.7~kisak4~j` from the
+signed Kisak stable Jammy repository, with its signing fingerprint checked. Both
+architectures are available for Jammy. The isolated CPU libraries are still
+built for glibc 2.35; native hardware graphics, glibc and GCC remain host-provided.
+AppImages prefer hardware Vulkan devices and select the known-good bundled CPU
+renderer instead of an older software-only host driver. The standalone carries
+no CPU-renderer files and skips this preflight path.
+
+Formatting, Clippy and all 80 tests passed locally. [Main CI](https://github.com/qwlp/omapdf/actions/runs/45560457941)
+passed both architectures, offline host/CPU painted-window checks, resize checks,
+GLIBC_2.35 checks and the separate stock Ubuntu 22.04 runtime job. The 0.0.9 tag
+was blocked by the stronger paint test and did not publish release assets.
+
+Tagged v0.0.10 verification, installation and catalog retesting are in progress.
+
+---
+
+# AppImage-only CPU fallback — 0.0.8
+
+The independent Ubuntu 22.04 runtime gate caught the second environment gap:
+the runner has a Vulkan loader but no physical Vulkan device/driver. It prevented
+v0.0.7 from publishing. At the user's request, only the AppImage now includes
+Mesa Lavapipe and its private native dependencies; the standalone stays lean.
+
+The shared reader selects the fallback only when the optional AppImage manifest
+exists and no host Vulkan device is available. It restarts the bundled reader
+before acquiring the primary-instance lock, with a private CPU library path and
+only the software ICD selected. It preserves host glibc/GCC in both modes and
+never adds the CPU libraries to the normal hardware search path. Existing-reader
+commands bypass graphics probing; the IPC test covers this without a display,
+host driver or usable CPU runtime. The restart uses the bundled reader path
+because current_exe() may identify the explicit ELF loader in portable mode.
+
+- Separate packaging outputs: `dist/omapdf` (lean) and `dist/omapdf-appimage`
+  (CPU payload used only by the AppImage wrapper). The runtime smoke asserts the
+  CPU stack is absent from the standalone and present in the AppImage.
+- Formatting, Clippy and all 80 tests passed on both architectures.
+- [Main CI](https://github.com/qwlp/omapdf/actions/runs/45552024307) and
+  [tagged release CI](https://github.com/qwlp/omapdf/actions/runs/45553405357)
+  passed normal offline windows, forced driverless CPU windows, and a separate
+  Ubuntu 22.04 runtime host without application development dependencies.
+- All 13 standalone and 41 AppImage embedded ELF files passed GLIBC_2.35 checks.
+  No glibc/GCC libraries are bundled even in the private CPU stack.
+- Downloaded Ubuntu-built artifacts passed checksums and current host Vulkan
+  enumeration. The standalone is 31 MiB rounded up; the AppImage is 79 MiB
+  rounded up. Local Arch-built CPU payloads are larger due to newer LLVM.
+- The final lean executable passed the full native Wayland interaction smoke.
+  An earlier boundary screenshot check was transiently unstable; the lean
+  build's full rerun passed without changing scrolling code.
+- The Ubuntu-built AppImage CPU runtime passed native Wayland window startup,
+  native PDF loading, startup commands, saved bookmarks, IPC forwarding and
+  clean quit on the current desktop. Temporary settings/library/cache files
+  were used and prior focus was restored.
+
+[v0.0.8](https://github.com/qwlp/omapdf/releases/tag/v0.0.8) is public and stable.
+[Catalog retesting](https://github.com/AppImage/appimage.github.io/pull/12425#issuecomment-7153891724)
+is in progress. Installation and final catalog result will be recorded below.
+
+---
+
+# XCB keyboard runtime correction — 0.0.7
+
+The actual v0.0.6 catalog retest found `libxcb-xkb.so.1` missing on the runner.
+The X11 backend worked, but excluding every XCB library had also excluded its
+keyboard extension. Build containers had this library through development
+packages, hiding the runtime dependency.
+
+The keyboard extension is now bundled with libxkbcommon-x11. Core X11/XCB,
+authentication, BSD/MD support and GPU libraries remain on the host. The runtime
+smoke explicitly verifies that both keyboard libraries initialize from the
+extracted bundle. A separate Ubuntu 22.04 runner installs GUI test tools only
+and checks downloaded artifacts without installing application build dependencies;
+publishing tagged releases requires this job to pass.
+
+Local formatting, Clippy, all 80 tests, release/portable builds, host Vulkan
+initialization, bundled keyboard-library resolution and offline Xvfb startup
+passed. Final release verification and catalog retesting are in progress.
+
+---
+
+# X11 catalog startup correction — 0.0.6
+
+The v0.0.5 catalog log shows a panic opening the reader window with the headless
+backend. Its runner provides DISPLAY through Xvfb, but GPUI's X11 feature was
+disabled, so DISPLAY was ignored. This is separate from the resolved glibc issue.
+
+- Enable GPUI's native X11 backend; its existing selection still prefers Wayland
+  whenever WAYLAND_DISPLAY is present.
+- Bundle libxkbcommon-x11 with libxkbcommon, while keeping X11/XCB libraries on
+  the host to match its Vulkan presentation stack.
+- Add an Xvfb smoke check for both download formats. It denies IPv4/IPv6 socket
+  creation with seccomp before executing the reader, checks for a visible window
+  owned by the reader or an AppImage child, and verifies 12 seconds of survival.
+  Settings, library and caches are temporary; cleanup targets only test processes.
+- Local formatting, Clippy, 32 unit tests and 48 integration tests passed.
+- Local release and portable/AppImage packaging passed.
+- Both the portable and AppImage passed real offline X11 window startup under
+  isolated Xvfb using the host GPU driver.
+- The existing native Wayland interaction smoke passed, including PDF loading,
+  prompt input, IPC, search, highlights, settings persistence, scrolling and quit.
+  It restored prior focus and did not restart the user's reader.
+
+[Feature CI](https://github.com/qwlp/omapdf/actions/runs/45546982582) passed
+on x86-64 and ARM64, including both offline window checks. The extracted runtime
+inspection then identified additional transitive X11 authentication/BSD/MD
+libraries to keep on the host, avoiding driver-library shadowing.
+
+[Tagged release CI](https://github.com/qwlp/omapdf/actions/runs/45548163706)
+passed the final exclusions, all tests and both offline window checks on both
+architectures, then published [v0.0.6](https://github.com/qwlp/omapdf/releases/tag/v0.0.6).
+Public x86-64 downloads passed SHA-256 checks, the GLIBC_2.35 ceiling for all 12
+embedded ELF files, and host Vulkan enumeration. Catalog retesting was requested
+in [PR #12425](https://github.com/AppImage/appimage.github.io/pull/12425#issuecomment-7153131061).
+
+---
+
 # AppImage glibc baseline correction — 2026-11-25
 
 The catalog failure for v0.0.4 comes from Ubuntu 24.04 ABI requirements in the

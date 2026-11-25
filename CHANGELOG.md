@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.7
+
+- Bundle the XCB keyboard extension required by the X11 keyboard bridge; it is
+  absent on the AppImage catalog’s otherwise complete X11 test system.
+- Verify that the extracted reader loads both keyboard libraries from its
+  bundled runtime, and gate releases on a separate Ubuntu 22.04 startup test
+  without development-library packages.
+
 ## 0.0.6
 
 - Enable native X11 window support when no Wayland display is available, fixing

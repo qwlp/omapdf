@@ -115,10 +115,33 @@ jobs:
           path: artifacts/*
           if-no-files-found: error
 
+  runtime-baseline:
+    name: Ubuntu 22.04 runtime without development packages
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install GUI test tools only
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb xauth xdotool libseccomp2
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: omapdf-linux-x86_64
+          path: runtime-artifacts
+      - name: Verify downloaded runtime and offline windows
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+        run: |
+          chmod +x runtime-artifacts/omapdf-linux-x86_64 runtime-artifacts/*.AppImage
+          python3 scripts/portable_runtime_smoke.py --binary runtime-artifacts/omapdf-linux-x86_64 --gpu --max-glibc 2.35
+          xvfb-run -a python3 scripts/x11_startup_smoke.py --binary runtime-artifacts/omapdf-linux-x86_64
+          xvfb-run -a python3 scripts/x11_startup_smoke.py --binary runtime-artifacts/*.AppImage
+
   release:
     name: Publish tagged release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [build, runtime-baseline]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

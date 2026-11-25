@@ -32,6 +32,7 @@ with tempfile.TemporaryDirectory(prefix='omapdf-runtime-test-') as temporary:
     # Inspect the extracted artifact, not just a build-time manifest. Check all
     # glibc companions too: deleting only libc still allows an ABI mismatch.
     for path in (runtime / 'lib').rglob('*'):
+        if path.name == 'libxcb-xkb.so.1':continue
         assert not path.name.startswith(('ld-linux', 'libnss_', 'libxcb', 'libX', 'libbsd.so.', 'libmd.so.')), path
         assert path.name not in {
             'libc.so.6', 'libm.so.6', 'libmvec.so.1', 'libdl.so.2',
@@ -68,8 +69,11 @@ with tempfile.TemporaryDirectory(prefix='omapdf-runtime-test-') as temporary:
         loaded = [path for path in initialized if pathlib.Path(path).name == soname]
         assert loaded, (soname, result.stderr)
         assert all(str(runtime) not in path for path in loaded), loaded
+    for soname in ('libxkbcommon-x11.so.0', 'libxcb-xkb.so.1'):
+        loaded = [path for path in initialized if pathlib.Path(path).name == soname]
+        assert loaded and all(str(runtime) in path for path in loaded), (soname, loaded)
     assert 'version lookup error' not in result.stderr, result.stderr
-    print('Portable reader uses host libc, libm and libgcc; no bundled glibc/loader/GCC/Wayland/X11/Vulkan DSOs')
+    print('Portable reader uses host libc, libm and libgcc; no bundled glibc/loader/GCC/Wayland/X11-core/Vulkan DSOs; bundled X11 keyboard bridge')
     if args.gpu:
         source = temporary / 'vulkan-probe.c'
         source.write_text(r'''

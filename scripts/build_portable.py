@@ -43,6 +43,9 @@ def library(name):
 # GCC's runtime must also come from the host: Mesa/LLVM may need newer symbol
 # versions than the build machine's libgcc_s/libstdc++ provides.
 def host_library(name):
+    # The keyboard extension is not a GPU driver dependency and is absent
+    # from otherwise complete X11 desktops (including the catalog runner).
+    if name == 'libxcb-xkb.so.1':return False
     return (name == loader or name in {
         'libc.so.6', 'libm.so.6', 'libmvec.so.1', 'libdl.so.2',
         'libpthread.so.0', 'librt.so.1', 'libutil.so.1', 'libresolv.so.2',

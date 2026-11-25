@@ -1738,19 +1738,18 @@ impl X11ClientState {
                 });
             }
             (true, None) => {
-                let Some(screen_resources) = get_reply(
+                let root = self.xcb_connection.setup().roots[self.x_root_index].root;
+                let screen_resources = get_reply(
                     || "Failed to get screen resources",
                     self.xcb_connection
-                        .randr_get_screen_resources_current(x_window),
+                        .randr_get_screen_resources_current(root),
                 )
-                .log_err() else {
-                    return;
-                };
+                .log_err();
 
                 // Ideally this would be re-queried when the window changes screens, but there
                 // doesn't seem to be an efficient / straightforward way to do this. Should also be
                 // updated when screen configurations change.
-                let mode_info = screen_resources.crtcs.iter().find_map(|crtc| {
+                let mode_info = screen_resources.as_ref().and_then(|screen_resources| screen_resources.crtcs.iter().find_map(|crtc| {
                     let crtc_info = self
                         .xcb_connection
                         .randr_get_crtc_info(*crtc, x11rb::CURRENT_TIME)
@@ -1762,7 +1761,7 @@ impl X11ClientState {
                         .modes
                         .iter()
                         .find(|m| m.id == crtc_info.mode)
-                });
+                }));
                 let refresh_rate = match mode_info {
                     Some(mode_info) => mode_refresh_rate(mode_info),
                     None => {
@@ -1773,6 +1772,9 @@ impl X11ClientState {
                         Duration::from_micros(1_000_000 / 60)
                     }
                 };
+                if std::env::var_os("OMAPDF_TRACE_X11").is_some() {
+                    eprintln!("Omapdf X11 refresh: root={root}, window={x_window}, RandR={}, interval={refresh_rate:?}", screen_resources.is_some());
+                }
 
                 let event_loop_token = self.start_refresh_loop(x_window, refresh_rate);
                 let Some(window_ref) = self.windows.get_mut(&x_window) else {

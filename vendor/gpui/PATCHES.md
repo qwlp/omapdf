@@ -28,3 +28,8 @@ the socket readiness notification. The client drains buffered events before the
 event loop blocks and after each dispatch, allowing its initial refresh timer
 to start even on an idle Xvfb display. The offline X11 smoke also checks real
 painted pixels before and after resizing the client window.
+
+The X11 refresh loop queries RandR using the screen root and retains a 60 Hz
+refresh fallback if mode discovery fails, so headless/older X servers cannot
+leave a mapped window without a repaint timer. OMAPDF_TRACE_X11 enables one-frame
+and refresh-timing diagnostics used by the offline paint regression checks.

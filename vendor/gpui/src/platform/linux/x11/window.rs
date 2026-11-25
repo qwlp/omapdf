@@ -1471,6 +1471,12 @@ impl PlatformWindow for X11Window {
     }
 
     fn draw(&self, scene: &Scene) {
+        static FIRST_DRAW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+        if std::env::var_os("OMAPDF_TRACE_X11").is_some()
+            && FIRST_DRAW.swap(false, std::sync::atomic::Ordering::Relaxed)
+        {
+            eprintln!("Omapdf X11 first frame: {} scene batches", scene.batches().count());
+        }
         let mut inner = self.0.state.borrow_mut();
         inner.renderer.draw(scene);
     }

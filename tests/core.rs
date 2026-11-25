@@ -164,11 +164,14 @@ fn single_instance_forwards_and_recovers_socket() {
     );
     // A forwarded command must work without a display, host Vulkan device or
     // CPU bundle: the existing reader already owns graphics initialization.
+    let cpu_runtime = directory.path().join("cpu-runtime");
+    std::fs::create_dir_all(cpu_runtime.join("software-vulkan")).unwrap();
+    std::fs::write(cpu_runtime.join("software-vulkan/icd.json"), "{}").unwrap();
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_omapdf"))
         .arg("--library")
         .arg(&path)
         .args(["--execute-command", "goto 4"])
-        .env("OMAPDF_PORTABLE_ROOT", directory.path().join("no-runtime"))
+        .env("OMAPDF_PORTABLE_ROOT", &cpu_runtime)
         .env("VK_ICD_FILENAMES", directory.path().join("no-driver.json"))
         .env("VK_DRIVER_FILES", directory.path().join("no-driver.json"))
         .env_remove("OMAPDF_SOFTWARE_VULKAN")

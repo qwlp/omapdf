@@ -34,8 +34,8 @@ Mark the file executable and launch it; if FUSE is unavailable, run it with
 The current version is **0.0.8**.
 
 Both forms run on Linux Wayland or X11 desktops and prefer your host GPU drivers.
-If no host Vulkan device is available, the portable runtime uses its bundled
-Mesa Lavapipe CPU renderer.
+The standalone executable requires a working host Vulkan driver. The AppImage
+includes a Mesa Lavapipe CPU fallback for machines without a host Vulkan device.
 Wayland is preferred when both display environments are available.
 To make Omapdf your default PDF reader afterward:
 
@@ -149,10 +149,19 @@ current Mesa/Intel/AMD Vulkan drivers use the same system ABI as other applicati
 Linux distribution at least as new as the build baseline (Ubuntu 22.04 / glibc 2.35 for
 release downloads) is required; musl-only distributions are unsupported.
 
-The optional CPU renderer and its Vulkan libraries are isolated under
+Only the AppImage bundles the optional CPU renderer. Its Vulkan libraries are isolated under
 `software-vulkan/` and enter the library path only after restarting in CPU mode.
 It still uses host glibc and GCC libraries; hardware drivers and the compositor
 remain supplied by the host.
+
+Build the separate AppImage payload (requires Mesa Lavapipe on the build host):
+
+```sh
+python3 scripts/build_portable.py --with-software-renderer
+python3 scripts/build_appimage.py --appimagetool /path/to/appimagetool
+```
+
+This creates `dist/omapdf-appimage` for packaging and keeps `dist/omapdf` lean.
 
 Check portable library resolution with `python3 scripts/portable_runtime_smoke.py`.
 Release CI builds inside Ubuntu 22.04 containers on both architectures and uses

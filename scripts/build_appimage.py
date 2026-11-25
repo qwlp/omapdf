@@ -21,9 +21,9 @@ root = Path(__file__).resolve().parent.parent
 architecture = platform.machine()
 if architecture not in {'x86_64', 'aarch64'}:
     raise SystemExit('AppImage builds support native Linux x86-64 and ARM64 hosts')
-portable = root / 'dist/omapdf'
+portable = root / 'dist/omapdf-appimage'
 if not portable.is_file():
-    raise SystemExit('Build the release reader and portable executable first')
+    raise SystemExit('Build the release reader and run build_portable.py --with-software-renderer first')
 version = tomllib.loads((root / 'Cargo.toml').read_text())['package']['version']
 output = root / 'dist' / f'Omapdf-{version}-{architecture}.AppImage'
 with tempfile.TemporaryDirectory(prefix='omapdf-appimage-') as temporary:

@@ -31,6 +31,14 @@ pub fn fallback_command(library: &Path) -> Result<Option<Command>> {
     let Some(root) = std::env::var_os("OMAPDF_PORTABLE_ROOT") else {
         return Ok(None);
     };
+    let root = PathBuf::from(root);
+    let software = root.join("software-vulkan");
+    let manifest = software.join("icd.json");
+    // Only AppImages carry this optional stack. The standalone executable
+    // retains its existing host-driver requirement and startup path.
+    if !manifest.is_file() {
+        return Ok(None);
+    }
     if std::env::var_os("OMAPDF_SOFTWARE_VULKAN").is_some() {
         return Ok(None);
     }
@@ -47,13 +55,6 @@ pub fn fallback_command(library: &Path) -> Result<Option<Command>> {
     if host_has_device() {
         return Ok(None);
     }
-    let root = PathBuf::from(root);
-    let software = root.join("software-vulkan");
-    let manifest = software.join("icd.json");
-    anyhow::ensure!(
-        manifest.is_file(),
-        "No host Vulkan device or bundled CPU renderer is available"
-    );
     let mut libraries = vec![software.join("lib")];
     if let Some(existing) = std::env::var_os("LD_LIBRARY_PATH") {
         libraries.extend(std::env::split_paths(&existing));

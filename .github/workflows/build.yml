@@ -66,6 +66,7 @@ jobs:
         run: |
           cargo build --release --locked
           python3 scripts/build_portable.py
+          python3 scripts/build_portable.py --with-software-renderer
       - name: Verify portable executable
         run: |
           python3 scripts/portable_runtime_smoke.py --gpu --max-glibc 2.35
@@ -91,7 +92,7 @@ jobs:
           chmod +x "$tool"
           python3 scripts/build_appimage.py --appimagetool "$tool"
           APPIMAGE_EXTRACT_AND_RUN=1 python3 scripts/portable_runtime_smoke.py \
-            --binary dist/Omapdf-*-${ARCH}.AppImage --max-glibc 2.35
+            --binary dist/Omapdf-*-${ARCH}.AppImage --software-renderer --max-glibc 2.35
           APPIMAGE_EXTRACT_AND_RUN=1 dist/Omapdf-*-${ARCH}.AppImage --version
           APPIMAGE_EXTRACT_AND_RUN=1 dist/Omapdf-*-${ARCH}.AppImage --inspect examples/reading-lab.pdf
       - name: Verify offline AppImage window startup
@@ -143,7 +144,8 @@ jobs:
         run: |
           chmod +x runtime-artifacts/omapdf-linux-x86_64 runtime-artifacts/*.AppImage
           python3 scripts/portable_runtime_smoke.py --binary runtime-artifacts/omapdf-linux-x86_64 --max-glibc 2.35
-          xvfb-run -a python3 scripts/x11_startup_smoke.py --expect-software-renderer --binary runtime-artifacts/omapdf-linux-x86_64
+          PATH=/nonexistent runtime-artifacts/omapdf-linux-x86_64 --inspect examples/reading-lab.pdf
+          python3 scripts/portable_runtime_smoke.py --binary runtime-artifacts/*.AppImage --software-renderer --max-glibc 2.35
           xvfb-run -a python3 scripts/x11_startup_smoke.py --expect-software-renderer --binary runtime-artifacts/*.AppImage
 
   release:

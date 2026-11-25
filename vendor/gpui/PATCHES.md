@@ -22,3 +22,9 @@ on a worker, joining on first text use before adding bundled fonts. This
 overlaps font discovery with Vulkan initialization without replacing the font
 database or invalidating font IDs after shaping begins. No font families or
 fallbacks are removed. Changes are in `wayland/client.rs` and `text_system.rs`.
+
+X11 startup: checked XCB round trips may buffer MapNotify/Expose while consuming
+the socket readiness notification. The client drains buffered events before the
+event loop blocks and after each dispatch, allowing its initial refresh timer
+to start even on an idle Xvfb display. The offline X11 smoke also checks real
+painted pixels before and after resizing the client window.

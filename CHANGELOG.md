@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.9
+
+- Drain XCB events buffered by checked requests so initial X11 map/expose events
+  can start the refresh loop without waiting for unrelated pointer input.
+- Check actual painted window pixels before and after a catalog-sized resize,
+  in addition to offline startup survival, for both rendering modes.
+- Keep CPU-rendering dependencies exclusive to the AppImage.
+
 ## 0.0.8
 
 - Add a Mesa Lavapipe CPU renderer to AppImages only for machines with no host Vulkan

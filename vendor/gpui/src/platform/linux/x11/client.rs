@@ -1604,7 +1604,17 @@ impl LinuxClient for X11Client {
             return;
         };
 
-        event_loop.run(None, &mut self.clone(), |_| {}).log_err();
+        // Checked XCB requests can read MapNotify/Expose into the user-space
+        // event queue while consuming all socket readiness. Drain that queue
+        // before blocking, and after dispatches which may issue more requests.
+        // Otherwise the initial refresh loop can wait for unrelated input.
+        let connection = self.0.borrow().xcb_connection.clone();
+        self.process_x11_events(&connection).log_err();
+        event_loop
+            .run(None, &mut self.clone(), |client| {
+                client.process_x11_events(&connection).log_err();
+            })
+            .log_err();
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {

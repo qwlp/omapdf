@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Verify a real X11 window opens and survives offline (run under xvfb-run).
 
-Requires xdotool and libseccomp. Settings and caches are isolated; only the
+Requires xdotool, xwd and libseccomp. Settings and caches are isolated; only the
 test reader is stopped. No physical desktop focus or cursor is changed.
 """
 import argparse
@@ -11,9 +11,19 @@ import os
 from pathlib import Path
 import signal
 import socket
+import struct
 import subprocess
 import tempfile
 import time
+
+
+def painted_colors(window, env):
+    dump = subprocess.check_output(['xwd', '-silent', '-id', window], env=env, timeout=10)
+    header = struct.unpack('>25I', dump[:100])
+    assert header[1] == 7 and header[11] == 32, 'Expected a 32-bit XWD capture'
+    offset = header[0] + header[19] * 12
+    pixels = memoryview(dump)[offset:offset + header[12] * header[5]].cast('I')
+    return len(set(pixels))
 
 
 def deny_network():
@@ -112,6 +122,15 @@ def main():
                     time.sleep(0.2)
                 subprocess.run(['xdotool', 'getwindowgeometry', window], env=env,
                                check=True, capture_output=True, timeout=5)
+                colors = painted_colors(window, env)
+                print(f'Initial X11 window capture: {colors} distinct colors', flush=True)
+                assert colors > 16, 'Window opened but did not paint its UI'
+                subprocess.run(['xdotool', 'windowsize', window, '796', '570'], env=env,
+                               check=True, timeout=5)
+                time.sleep(1)
+                colors = painted_colors(window, env)
+                print(f'Resized X11 window capture: {colors} distinct colors', flush=True)
+                assert colors > 16, 'Window stopped painting after resize'
                 if args.expect_software_renderer:
                     log.flush()
                     log.seek(0)

@@ -32,7 +32,7 @@ with tempfile.TemporaryDirectory(prefix='omapdf-runtime-test-') as temporary:
     # Inspect the extracted artifact, not just a build-time manifest. Check all
     # glibc companions too: deleting only libc still allows an ABI mismatch.
     for path in (runtime / 'lib').rglob('*'):
-        assert not path.name.startswith(('ld-linux', 'libnss_', 'libxcb', 'libX11')), path
+        assert not path.name.startswith(('ld-linux', 'libnss_', 'libxcb', 'libX', 'libbsd.so.', 'libmd.so.')), path
         assert path.name not in {
             'libc.so.6', 'libm.so.6', 'libmvec.so.1', 'libdl.so.2',
             'libpthread.so.0', 'librt.so.1', 'libutil.so.1', 'libresolv.so.2',

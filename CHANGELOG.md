@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.0.6
+
+- Enable native X11 window support when no Wayland display is available, fixing
+  startup on X11 desktops and the AppImage catalog’s Xvfb test environment.
+  Wayland remains preferred when both display variables are set.
+- Bundle the X11 keyboard bridge while keeping host X11/XCB libraries aligned
+  with the host Vulkan driver.
+- Test visible portable and AppImage windows under Xvfb with Internet sockets
+  blocked, and verify they survive beyond the catalog’s startup timeout.
+
 ## 0.0.5
 
 - Build release downloads in Ubuntu 22.04 containers so the reader and bundled

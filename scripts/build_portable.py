@@ -38,6 +38,7 @@ def library(name):
 # an older libc, or mixing a host libc with a bundled loader/libm, is unsafe.
 # Mesa also uses Wayland client/protocol symbols; keep the entire Wayland
 # library family and Vulkan loader on the host to match its drivers/layers.
+# X11/XCB libraries also stay on the host to match its Vulkan presentation stack.
 # GCC's runtime must also come from the host: Mesa/LLVM may need newer symbol
 # versions than the build machine's libgcc_s/libstdc++ provides.
 def host_library(name):
@@ -48,8 +49,8 @@ def host_library(name):
         'libgcc_s.so.1', 'libstdc++.so.6',
         'libwayland-client.so.0', 'libwayland-cursor.so.0',
         'libwayland-egl.so.1', 'libwayland-server.so.0', 'libvulkan.so.1',
-    } or name.startswith('libnss_'))
-queue=[binary]+[library(name) for name in ['libwayland-client.so.0','libwayland-cursor.so.0','libxkbcommon.so.0','libfontconfig.so.1','libfreetype.so.6','libvulkan.so.1']]
+    } or name.startswith(('libnss_', 'libxcb', 'libX11')))
+queue=[binary]+[library(name) for name in ['libwayland-client.so.0','libwayland-cursor.so.0','libxkbcommon.so.0','libxkbcommon-x11.so.0','libfontconfig.so.1','libfreetype.so.6','libvulkan.so.1']]
 seen=set()
 while queue:
     source=queue.pop()

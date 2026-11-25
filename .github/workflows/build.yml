@@ -45,7 +45,8 @@ jobs:
             ca-certificates curl git build-essential pkg-config clang libclang-dev cmake python3 python3-tomli binutils file \
             libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev libfontconfig1-dev libfreetype6-dev \
             libvulkan-dev libasound2-dev libssl-dev libegl1-mesa-dev libgl1-mesa-dev \
-            xkb-data desktop-file-utils squashfs-tools mesa-vulkan-drivers
+            xkb-data desktop-file-utils squashfs-tools mesa-vulkan-drivers \
+            xvfb xauth xdotool libseccomp2 libxcb1-dev libx11-xcb-dev
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
@@ -72,6 +73,8 @@ jobs:
           PATH=/nonexistent dist/omapdf --inspect examples/reading-lab.pdf
           PATH=/nonexistent dist/omapdf --inspect examples/reading-lab.epub
           desktop-file-validate assets/io.omapdf.desktop
+      - name: Verify offline X11 window startup
+        run: xvfb-run -a python3 scripts/x11_startup_smoke.py --binary dist/omapdf
       - name: Build AppImage
         env:
           ARCH: ${{ matrix.arch }}
@@ -91,6 +94,10 @@ jobs:
             --binary dist/Omapdf-*-${ARCH}.AppImage --max-glibc 2.35
           APPIMAGE_EXTRACT_AND_RUN=1 dist/Omapdf-*-${ARCH}.AppImage --version
           APPIMAGE_EXTRACT_AND_RUN=1 dist/Omapdf-*-${ARCH}.AppImage --inspect examples/reading-lab.pdf
+      - name: Verify offline AppImage window startup
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+        run: xvfb-run -a python3 scripts/x11_startup_smoke.py --binary dist/Omapdf-*-${{ matrix.arch }}.AppImage
       - name: Prepare download
         env:
           ARCH: ${{ matrix.arch }}

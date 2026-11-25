@@ -28,12 +28,13 @@ chmod +x omapdf-linux-x86_64
 ./omapdf-linux-x86_64 paper.pdf
 ```
 
-Release AppImages use names such as `Omapdf-0.0.5-x86_64.AppImage`.
+Release AppImages use names such as `Omapdf-0.0.6-x86_64.AppImage`.
 Mark the file executable and launch it; if FUSE is unavailable, run it with
 `--appimage-extract-and-run`. SHA-256 checksum files accompany every download.
-The current version is **0.0.5**.
+The current version is **0.0.6**.
 
-Both forms run on any Linux Wayland desktop and use your host GPU drivers.
+Both forms run on Linux Wayland or X11 desktops and use your host GPU drivers.
+Wayland is preferred when both display environments are available.
 To make Omapdf your default PDF reader afterward:
 
 ```sh
@@ -119,7 +120,7 @@ Omapdf is still under active development.
 ## Build and run
 
 You need a Rust toolchain, a C/C++ build toolchain for the bundled native dependencies,
-`pkg-config`, and the development libraries needed by GPUI’s Linux Wayland backend.
+`pkg-config`, and the development libraries needed by GPUI’s Linux Wayland and X11 backends.
 The build targets Linux x86-64 and ARM64. Portable packages are built natively
 on each architecture.
 
@@ -140,8 +141,8 @@ Or use `make portable` to run both steps. Portable packaging uses `ldd` and
 `readelf` to collect the local user-space runtime. On first launch, the executable
 extracts a private, versioned runtime under `$XDG_CACHE_HOME/omapdf/runtime`.
 The host supplies glibc and its ELF loader, the GCC runtime, Wayland libraries,
-the Vulkan loader, the Wayland compositor, GPU drivers and desktop portals. The portable runtime deliberately
-excludes glibc (including libm), GCC, Wayland and Vulkan loader libraries so
+the Vulkan loader, a Wayland compositor or X11 server, GPU drivers and desktop portals. The portable runtime deliberately
+excludes glibc (including libm), GCC, Wayland, X11/XCB and Vulkan loader libraries so
 current Mesa/Intel/AMD Vulkan drivers use the same system ABI as other applications. A glibc-based
 Linux distribution at least as new as the build baseline (Ubuntu 22.04 / glibc 2.35 for
 release downloads) is required; musl-only distributions are unsupported.
@@ -279,7 +280,9 @@ x86-64 and ARM64. Every successful build uploads portable executables, AppImages
 workflow artifacts. Version tags publish both architectures to GitHub Releases;
 tags containing a suffix such as `-alpha` produce prereleases.
 
-Desktop interaction smoke tests run separately on a real Wayland/Hyprland session.
+CI also opens the portable and AppImage under Xvfb with IPv4/IPv6 sockets denied,
+and verifies that a visible X11 window survives startup. Desktop interaction smoke
+tests run separately on a real Wayland/Hyprland session.
 
 ## Development
 

@@ -28,10 +28,10 @@ chmod +x omapdf-linux-x86_64
 ./omapdf-linux-x86_64 paper.pdf
 ```
 
-Release AppImages use names such as `Omapdf-0.0.11-x86_64.AppImage`.
+Release AppImages use names such as `Omapdf-0.0.12-x86_64.AppImage`.
 Mark the file executable and launch it; if FUSE is unavailable, run it with
 `--appimage-extract-and-run`. SHA-256 checksum files accompany every download.
-The current version is **0.0.11**.
+The current version is **0.0.12**.
 
 Both forms run on Linux Wayland or X11 desktops and prefer your host GPU drivers.
 The standalone executable requires a working host Vulkan driver. The AppImage

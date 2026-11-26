@@ -117,8 +117,9 @@ impl PageLayout {
             return [0., 0.];
         }
         self.pages
-            .iter()
-            .find(|p| p.page == page)
+            .get(page)
+            .filter(|p| p.page == page)
+            .or_else(|| self.pages.iter().find(|p| p.page == page))
             .map(|p| [p.x, p.y])
             .unwrap_or_default()
     }
@@ -128,31 +129,54 @@ impl PageLayout {
         } else {
             height * 0.5
         };
-        self.pages
-            .iter()
-            .copied()
-            .filter(|p| {
-                p.x + p.width >= x - margin
-                    && p.x <= x + width + margin
-                    && p.y + p.height >= y - margin
-                    && p.y <= y + height + margin
-            })
-            .collect()
+        match self.mode {
+            LayoutMode::Vertical => {
+                let min_y = y - margin;
+                let max_y = y + height + margin;
+                let start = self.pages.partition_point(|p| p.y + p.height < min_y);
+                self.pages[start..]
+                    .iter()
+                    .copied()
+                    .take_while(|p| p.y <= max_y)
+                    .filter(|p| p.x + p.width >= x - margin && p.x <= x + width + margin)
+                    .collect()
+            }
+            LayoutMode::Horizontal => {
+                let min_x = x - margin;
+                let max_x = x + width + margin;
+                let start = self.pages.partition_point(|p| p.x + p.width < min_x);
+                self.pages[start..]
+                    .iter()
+                    .copied()
+                    .take_while(|p| p.x <= max_x)
+                    .filter(|p| p.y + p.height >= y - margin && p.y <= y + height + margin)
+                    .collect()
+            }
+            LayoutMode::Single | LayoutMode::Spread => self
+                .pages
+                .iter()
+                .copied()
+                .filter(|p| {
+                    p.x + p.width >= x - margin
+                        && p.x <= x + width + margin
+                        && p.y + p.height >= y - margin
+                        && p.y <= y + height + margin
+                })
+                .collect(),
+        }
     }
     pub fn page_at(&self, position: f32) -> Option<usize> {
-        if !self.mode.continuous() {
+        if !self.mode.continuous() || self.pages.is_empty() {
             return None;
         }
+        let index = match self.mode {
+            LayoutMode::Horizontal => self.pages.partition_point(|p| position >= p.x + p.width),
+            LayoutMode::Vertical => self.pages.partition_point(|p| position >= p.y + p.height),
+            _ => return None,
+        };
         self.pages
-            .iter()
-            .find(|p| {
-                if self.mode == LayoutMode::Horizontal {
-                    position < p.x + p.width
-                } else {
-                    position < p.y + p.height
-                }
-            })
-            .or(self.pages.last())
+            .get(index)
+            .or_else(|| self.pages.last())
             .map(|p| p.page)
     }
 }

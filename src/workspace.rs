@@ -1,15 +1,20 @@
 use crate::reader::{PreparedOpen, Reader, Startup};
 use gpui::{prelude::*, *};
-use omapdf::{config::Config, ipc::Request, state::Library};
+use omapdf::{
+    config::Config,
+    ipc::{Request, SignalSender, signal_channel},
+    raster::Rasterizer,
+    state::Library,
+};
 use serde::{Deserialize, Serialize};
-use std::{fs, path::PathBuf, sync::mpsc};
+use std::{fs, io::Write, path::PathBuf, sync::Arc};
 
 actions!(workspace, [NextTab, PreviousTab, CloseTab]);
 
 pub(crate) const TAB_SIDEBAR_WIDTH: f32 = 192.;
 pub(crate) const TAB_BAR_HEIGHT: f32 = 32.;
 
-#[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 struct Session {
     paths: Vec<PathBuf>,
     active: usize,
@@ -52,7 +57,11 @@ impl Session {
             .unwrap_or_else(|| std::path::Path::new("."));
         fs::create_dir_all(parent)?;
         let file = tempfile::NamedTempFile::new_in(parent)?;
-        serde_json::to_writer(file.as_file(), self)?;
+        {
+            let mut writer = std::io::BufWriter::new(file.as_file());
+            serde_json::to_writer(&mut writer, self)?;
+            writer.flush()?;
+        }
         file.as_file().sync_all()?;
         file.persist(path)?;
         Ok(())
@@ -60,14 +69,17 @@ impl Session {
 }
 
 pub struct Workspace {
-    tabs: Vec<(Entity<Reader>, mpsc::Sender<Request>)>,
+    tabs: Vec<(Entity<Reader>, SignalSender<Request>)>,
     active: usize,
     library: PathBuf,
-    config: PathBuf,
-    opens: mpsc::Sender<Request>,
-    pending: mpsc::Receiver<Request>,
+    config_path: PathBuf,
+    initial_config: Option<Config>,
+    initial_library: Option<Library>,
+    rasterizer: Arc<Rasterizer>,
+    opens: SignalSender<Request>,
     session_path: Option<PathBuf>,
     saved_session: Option<Session>,
+    session_save_queue: Arc<parking_lot::Mutex<Option<(PathBuf, Session)>>>,
     tab_scroll: ScrollHandle,
     horizontal_tabs: bool,
 }
@@ -75,25 +87,47 @@ pub struct Workspace {
 pub fn open_window(
     library: PathBuf,
     config: PathBuf,
+    rasterizer: Arc<Rasterizer>,
     requests: Vec<Request>,
     cx: &mut App,
 ) -> WindowHandle<Workspace> {
-    open_workspace(library, config, requests, None, false, cx)
+    let loaded = Config::load(&config).unwrap_or_default();
+    open_workspace(
+        library, config, loaded, None, rasterizer, requests, None, false, cx,
+    )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn open_window_prepared(
     library: PathBuf,
-    config: PathBuf,
+    config_path: PathBuf,
+    config: Config,
+    initial_library: Option<Library>,
+    rasterizer: Arc<Rasterizer>,
     requests: Vec<Request>,
     prepared: Option<PreparedOpen>,
     cx: &mut App,
 ) -> WindowHandle<Workspace> {
-    open_workspace(library, config, requests, prepared, true, cx)
+    open_workspace(
+        library,
+        config_path,
+        config,
+        initial_library,
+        rasterizer,
+        requests,
+        prepared,
+        true,
+        cx,
+    )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn open_workspace(
     library: PathBuf,
-    config: PathBuf,
+    config_path: PathBuf,
+    config: Config,
+    initial_library: Option<Library>,
+    rasterizer: Arc<Rasterizer>,
     requests: Vec<Request>,
     mut prepared: Option<PreparedOpen>,
     primary: bool,
@@ -115,26 +149,32 @@ fn open_workspace(
         },
         |window, cx| {
             cx.new(|cx| {
-                let (opens, pending) = mpsc::channel();
+                let (opens, pending) = signal_channel();
                 let session_path = primary.then(|| {
                     let mut path = library.as_os_str().to_os_string();
                     path.push(".tabs.json");
                     PathBuf::from(path)
                 });
+                let had_session_file = session_path.as_ref().is_some_and(|p| p.exists());
                 let restored = session_path
                     .as_ref()
                     .filter(|_| requests.iter().all(|request| request.file.is_none()))
                     .map(|path| Session::restore(path))
                     .unwrap_or_default();
+                let restored_snapshot =
+                    (!restored.paths.is_empty() || !had_session_file).then(|| restored.clone());
                 let mut workspace = Workspace {
                     tabs: vec![],
                     active: 0,
                     library,
-                    config,
+                    config_path,
+                    initial_config: Some(config),
+                    initial_library,
+                    rasterizer,
                     opens,
-                    pending,
                     session_path,
-                    saved_session: None,
+                    saved_session: restored_snapshot,
+                    session_save_queue: Arc::new(parking_lot::Mutex::new(None)),
                     tab_scroll: ScrollHandle::new(),
                     horizontal_tabs: false,
                 };
@@ -161,17 +201,16 @@ fn open_workspace(
                 if workspace.tabs.is_empty() {
                     workspace.add(Request::default(), window, cx);
                 }
-                workspace.save_session(cx);
-                let executor = cx.background_executor().clone();
+                workspace.save_session(cx, false);
                 let handle = window.window_handle();
                 cx.spawn(async move |this, cx| {
-                    loop {
-                        executor.timer(std::time::Duration::from_millis(100)).await;
+                    while let Some(request) = pending.recv_async().await {
+                        let mut batch = vec![request];
+                        batch.extend(pending.try_iter());
                         if handle
                             .update(cx, |_, window, cx| {
                                 this.update(cx, |this, cx| {
-                                    let requests: Vec<_> = this.pending.try_iter().collect();
-                                    for request in requests {
+                                    for request in batch {
                                         this.receive(request, window, cx);
                                     }
                                 })
@@ -202,14 +241,23 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let (sender, requests) = mpsc::channel();
-        let config = Config::load(&self.config).unwrap_or_default();
+        let (sender, requests) = signal_channel();
+        let config = self
+            .initial_config
+            .take()
+            .unwrap_or_else(|| Config::load(&self.config_path).unwrap_or_default());
+        let library = self
+            .initial_library
+            .take()
+            .unwrap_or_else(|| Library::load(&self.library).unwrap_or_default());
+        let rasterizer = self.rasterizer.clone();
         let reader = cx.new(|cx| {
             Reader::new(
                 Startup {
-                    library: Library::load(&self.library).unwrap_or_default(),
+                    library,
                     library_path: self.library.clone(),
                     config,
+                    rasterizer,
                     file: request.file,
                     page: request.page,
                     commands: request.commands,
@@ -222,7 +270,7 @@ impl Workspace {
         });
         reader.update(cx, |reader, _| reader.opens = Some(self.opens.clone()));
         cx.observe(&reader, |this, _, cx| {
-            this.save_session(cx);
+            this.save_session(cx, false);
             cx.notify();
         })
         .detach();
@@ -236,26 +284,32 @@ impl Workspace {
         if request.file.is_none() {
             let _ = self.tabs[self.active].1.send(request);
         } else {
-            let new_windows =
-                Config::load(&self.config).is_ok_and(|c| c.value("open_in_new_windows") == "1");
+            let new_windows = Config::load(&self.config_path)
+                .is_ok_and(|c| c.value("open_in_new_windows") == "1");
             let empty = self.tabs.len() == 1 && self.tabs[0].0.read(cx).is_empty();
             if empty {
                 self.tabs[0]
                     .0
                     .update(cx, |reader, cx| reader.receive_request(request, cx));
             } else if new_windows {
-                open_window(self.library.clone(), self.config.clone(), vec![request], cx);
+                open_window(
+                    self.library.clone(),
+                    self.config_path.clone(),
+                    self.rasterizer.clone(),
+                    vec![request],
+                    cx,
+                );
                 return;
             } else {
                 self.add(request, window, cx);
             }
         }
-        self.save_session(cx);
+        self.save_session(cx, false);
         window.activate_window();
         cx.notify();
     }
 
-    fn save_session(&mut self, cx: &App) {
+    fn save_session(&mut self, cx: &App, sync: bool) {
         let Some(path) = &self.session_path else {
             return;
         };
@@ -268,9 +322,35 @@ impl Workspace {
         if self.saved_session.as_ref() == Some(&session) {
             return;
         }
-        match session.save(path) {
-            Ok(()) => self.saved_session = Some(session),
-            Err(error) => eprintln!("Could not save tabs to {}: {error}", path.display()),
+        self.saved_session = Some(session.clone());
+        if sync {
+            *self.session_save_queue.lock() = None;
+            if let Err(error) = session.save(path) {
+                eprintln!("Could not save tabs to {}: {error}", path.display());
+            }
+            return;
+        }
+        // Coalesce rapid session updates onto the background executor so fsync
+        // never stalls window creation or tab switching.
+        let mut slot = self.session_save_queue.lock();
+        let spawn = slot.is_none();
+        *slot = Some((path.clone(), session));
+        drop(slot);
+        if spawn {
+            let queue = self.session_save_queue.clone();
+            cx.background_executor()
+                .spawn(async move {
+                    loop {
+                        let next = queue.lock().take();
+                        let Some((path, session)) = next else {
+                            break;
+                        };
+                        if let Err(error) = session.save(&path) {
+                            eprintln!("Could not save tabs to {}: {error}", path.display());
+                        }
+                    }
+                })
+                .detach();
         }
     }
 
@@ -278,7 +358,7 @@ impl Workspace {
         self.active = index;
         self.tabs[index].0.read(cx).focus_tab(window);
         self.tab_scroll.scroll_to_item(index);
-        self.save_session(cx);
+        self.save_session(cx, false);
         cx.notify();
     }
 
@@ -293,7 +373,7 @@ impl Workspace {
     fn close(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         self.tabs.remove(index);
         if self.tabs.is_empty() {
-            self.save_session(cx);
+            self.save_session(cx, true);
             window.remove_window();
         } else {
             let active = self.active.saturating_sub(usize::from(index < self.active));

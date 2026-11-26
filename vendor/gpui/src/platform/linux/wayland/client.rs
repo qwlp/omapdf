@@ -212,6 +212,7 @@ pub(crate) struct WaylandClientState {
     keyboard_layout: LinuxKeyboardLayout,
     keymap_state: Option<xkb::State>,
     compose_state: Option<xkb::compose::State>,
+    compose_loaded: bool,
     drag: DragState,
     click: ClickState,
     repeat: KeyRepeat,
@@ -384,9 +385,6 @@ impl WaylandClientStatePtr {
         {
             state.keyboard_focused_window = Some(window);
         }
-        if state.windows.is_empty() {
-            state.common.signal.stop();
-        }
     }
 }
 
@@ -446,9 +444,18 @@ fn wl_output_version(version: u32) -> u32 {
 
 impl WaylandClient {
     pub(crate) fn new() -> Self {
+        crate::platform::linux::profile_startup("WaylandClient::new start");
         // Vulkan device discovery is independent of Wayland and font discovery.
         // Start it first so the three startup costs overlap rather than add up.
-        let gpu_context = std::thread::spawn(BladeContext::new);
+        let gpu_context = std::thread::spawn(|| {
+            let start = Instant::now();
+            let res = BladeContext::new();
+            crate::platform::linux::profile_startup(&format!(
+                "BladeContext::new finished in {:.2}ms",
+                start.elapsed().as_secs_f64() * 1000.0
+            ));
+            res
+        });
         let conn = Connection::connect_to_env().unwrap();
 
         let (globals, mut event_queue) =
@@ -501,10 +508,15 @@ impl WaylandClient {
             })
             .unwrap();
 
+        let gpu_wait = Instant::now();
         let gpu_context = gpu_context
             .join()
             .expect("GPU initialization thread panicked")
             .expect("Unable to init GPU context");
+        crate::platform::linux::profile_startup(&format!(
+            "WaylandClient joined gpu_context after {:.2}ms wait",
+            gpu_wait.elapsed().as_secs_f64() * 1000.0
+        ));
 
         let seat = seat.unwrap();
         let globals = Globals::new(
@@ -577,6 +589,7 @@ impl WaylandClient {
             keyboard_layout: LinuxKeyboardLayout::new(UNKNOWN_KEYBOARD_LAYOUT_NAME),
             keymap_state: None,
             compose_state: None,
+            compose_loaded: false,
             drag: DragState {
                 data_offer: None,
                 window: None,
@@ -1233,6 +1246,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                     log::error!("Received keymap format {:?}, expected XkbV1", format);
                     return;
                 }
+                let keymap_start = Instant::now();
                 let xkb_context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
                 let keymap = unsafe {
                     xkb::Keymap::new_from_fd(
@@ -1247,7 +1261,14 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                     .expect("Failed to create keymap")
                 };
                 state.keymap_state = Some(xkb::State::new(&keymap));
-                state.compose_state = get_xkb_compose_state(&xkb_context);
+                // Load the large XKB compose table lazily on first key press
+                // rather than blocking initial window configuration and paint.
+                state.compose_state = None;
+                state.compose_loaded = false;
+                crate::platform::linux::profile_startup(&format!(
+                    "wl_keyboard::Keymap compiled in {:.2}ms",
+                    keymap_start.elapsed().as_secs_f64() * 1000.0
+                ));
                 drop(state);
 
                 this.handle_keyboard_layout_change();
@@ -1330,6 +1351,11 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                     wl_keyboard::KeyState::Pressed if !keysym.is_modifier_key() => {
                         let mut keystroke =
                             Keystroke::from_xkb(keymap_state, state.modifiers, keycode);
+                        if !state.compose_loaded {
+                            state.compose_loaded = true;
+                            let xkb_context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+                            state.compose_state = get_xkb_compose_state(&xkb_context);
+                        }
                         if let Some(mut compose) = state.compose_state.take() {
                             compose.feed(keysym);
                             match compose.status() {

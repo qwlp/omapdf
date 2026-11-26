@@ -1,22 +1,152 @@
 //! One primary process per library. Other invocations forward structured requests.
 use anyhow::{Context, Result};
+use parking_lot::{Condvar, Mutex};
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::VecDeque,
     fs::{File, OpenOptions},
+    future::Future,
     io::{Read, Write},
     os::unix::{
         fs::{FileTypeExt, PermissionsExt},
         net::{UnixListener, UnixStream},
     },
     path::{Path, PathBuf},
+    pin::Pin,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
-        mpsc::{self, Receiver},
+        mpsc,
     },
+    task::{Context as TaskContext, Poll, Waker},
     thread::JoinHandle,
-    time::Duration,
+    time::{Duration, Instant},
 };
+
+struct ChannelState<T> {
+    queue: VecDeque<T>,
+    waker: Option<Waker>,
+    closed: bool,
+}
+
+/// Zero-polling multi-producer single-consumer channel supporting both
+/// blocking `recv_timeout` (for tests/CLI) and async `recv_async` (for GPUI).
+pub struct SignalSender<T> {
+    shared: Arc<(Mutex<ChannelState<T>>, Condvar)>,
+}
+
+impl<T> Clone for SignalSender<T> {
+    fn clone(&self) -> Self {
+        Self {
+            shared: self.shared.clone(),
+        }
+    }
+}
+
+impl<T> SignalSender<T> {
+    pub fn send(&self, value: T) -> std::result::Result<(), T> {
+        let (lock, condvar) = &*self.shared;
+        let waker = {
+            let mut state = lock.lock();
+            if state.closed {
+                return Err(value);
+            }
+            state.queue.push_back(value);
+            state.waker.take()
+        };
+        condvar.notify_one();
+        if let Some(waker) = waker {
+            waker.wake();
+        }
+        Ok(())
+    }
+}
+
+pub struct SignalReceiver<T> {
+    shared: Arc<(Mutex<ChannelState<T>>, Condvar)>,
+}
+
+impl<T> Drop for SignalReceiver<T> {
+    fn drop(&mut self) {
+        let (lock, condvar) = &*self.shared;
+        lock.lock().closed = true;
+        condvar.notify_all();
+    }
+}
+
+impl<T> SignalReceiver<T> {
+    pub fn try_recv(&self) -> Option<T> {
+        self.shared.0.lock().queue.pop_front()
+    }
+
+    pub fn try_iter(&self) -> Vec<T> {
+        self.shared.0.lock().queue.drain(..).collect()
+    }
+
+    pub fn recv_timeout(
+        &self,
+        timeout: Duration,
+    ) -> std::result::Result<T, mpsc::RecvTimeoutError> {
+        let deadline = Instant::now() + timeout;
+        let (lock, condvar) = &*self.shared;
+        let mut state = lock.lock();
+        loop {
+            if let Some(item) = state.queue.pop_front() {
+                return Ok(item);
+            }
+            if Arc::strong_count(&self.shared) == 1 {
+                return Err(mpsc::RecvTimeoutError::Disconnected);
+            }
+            if condvar.wait_until(&mut state, deadline).timed_out() {
+                return state
+                    .queue
+                    .pop_front()
+                    .ok_or(mpsc::RecvTimeoutError::Timeout);
+            }
+        }
+    }
+
+    pub fn recv_async(&self) -> RecvFuture<'_, T> {
+        RecvFuture { receiver: self }
+    }
+}
+
+pub struct RecvFuture<'a, T> {
+    receiver: &'a SignalReceiver<T>,
+}
+
+impl<T> Future for RecvFuture<'_, T> {
+    type Output = Option<T>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<Self::Output> {
+        let mut state = self.receiver.shared.0.lock();
+        if let Some(item) = state.queue.pop_front() {
+            return Poll::Ready(Some(item));
+        }
+        if Arc::strong_count(&self.receiver.shared) == 1 {
+            return Poll::Ready(None);
+        }
+        state.waker = Some(cx.waker().clone());
+        Poll::Pending
+    }
+}
+
+pub fn signal_channel<T>() -> (SignalSender<T>, SignalReceiver<T>) {
+    let shared = Arc::new((
+        Mutex::new(ChannelState {
+            queue: VecDeque::new(),
+            waker: None,
+            closed: false,
+        }),
+        Condvar::new(),
+    ));
+    (
+        SignalSender {
+            shared: shared.clone(),
+        },
+        SignalReceiver { shared },
+    )
+}
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Request {
@@ -30,7 +160,7 @@ pub struct Server {
     path: PathBuf,
     stop: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
-    receiver: Option<Receiver<Request>>,
+    receiver: Option<SignalReceiver<Request>>,
 }
 
 pub enum Instance {
@@ -59,13 +189,13 @@ impl Server {
             Ok(()) => {}
             Err(std::fs::TryLockError::WouldBlock) => {
                 let mut connection = None;
-                for _ in 0..20 {
+                for _ in 0..100 {
                     match UnixStream::connect(&path) {
                         Ok(stream) => {
                             connection = Some(stream);
                             break;
                         }
-                        Err(_) => std::thread::sleep(Duration::from_millis(25)),
+                        Err(_) => std::thread::sleep(Duration::from_millis(5)),
                     }
                 }
                 let mut stream = connection.context(
@@ -92,31 +222,34 @@ impl Server {
         }
         let listener = UnixListener::bind(&path).context("Cannot create reader control socket")?;
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
-        listener.set_nonblocking(true)?;
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = stop.clone();
-        let (sender, receiver) = mpsc::channel();
-        let worker = std::thread::spawn(move || {
-            while !thread_stop.load(Ordering::Relaxed) {
-                match listener.accept() {
-                    Ok((mut stream, _)) => {
-                        let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
-                        let mut data = vec![];
-                        if (&mut stream).take(65537).read_to_end(&mut data).is_ok()
-                            && data.len() <= 65536
-                            && let Ok(request) = serde_json::from_slice(&data)
-                            && sender.send(request).is_ok()
-                        {
-                            let _ = stream.write_all(b"OK");
+        let (sender, receiver) = signal_channel();
+        let worker = std::thread::Builder::new()
+            .name("ipc-server".into())
+            .spawn(move || {
+                while !thread_stop.load(Ordering::Acquire) {
+                    match listener.accept() {
+                        Ok((mut stream, _)) => {
+                            if thread_stop.load(Ordering::Acquire) {
+                                break;
+                            }
+                            let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+                            let mut data = vec![];
+                            if (&mut stream).take(65537).read_to_end(&mut data).is_ok()
+                                && data.len() <= 65536
+                                && let Ok(request) = serde_json::from_slice(&data)
+                                && sender.send(request).is_ok()
+                            {
+                                let _ = stream.write_all(b"OK");
+                            }
                         }
+                        Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                        Err(_) => break,
                     }
-                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                        std::thread::sleep(Duration::from_millis(25))
-                    }
-                    Err(_) => break,
                 }
-            }
-        });
+            })
+            .context("Cannot start IPC listener thread")?;
         Ok(Instance::Primary(Self {
             _lock: lock,
             path,
@@ -125,14 +258,16 @@ impl Server {
             receiver: Some(receiver),
         }))
     }
-    pub fn take_receiver(&mut self) -> Receiver<Request> {
+    pub fn take_receiver(&mut self) -> SignalReceiver<Request> {
         self.receiver.take().expect("receiver taken once")
     }
 }
 
 impl Drop for Server {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
+        self.stop.store(true, Ordering::Release);
+        // Unblock the blocking accept() immediately on shutdown.
+        let _ = UnixStream::connect(&self.path);
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }

@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.0.12
+
+- Load host and bundled UI fonts on demand by matching face rather than scanning
+  the entire system font database or loading every weight/style variant on startup,
+  eliminating cold-cache font stalls and reducing memory usage.
+- Compile GPUI Blade render pipelines in parallel, cache them across windows, skip
+  redundant opaque/transparent pipeline recompilation on Wayland compositors with
+  server-side decorations, and defer Wayland cursor-theme and XKB compose-table
+  initialization until needed.
+- Pre-rasterize the initial page in parallel with GPU initialization, render MuPDF
+  pages directly to 4-channel BGRA pixmaps, share one Condvar-driven rasterizer
+  with neighbor prefetching across tabs, and remove the accidental scroll debounce
+  on newly visible pages.
+- Replace IPC polling loops with zero-polling event wakeups, move routine session
+  and library persistence off the UI thread, and cache per-frame page layout and
+  config metadata stamps.
+- Add optional `--daemon` resident mode to keep the GPU, font, and rasterizer
+  runtime warm with zero windows for ~20 ms subsequent document opens.
+
 ## 0.0.11
 
 - Add a compact horizontal tab strip and a vertical sidebar option under Appearance.

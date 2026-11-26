@@ -1,11 +1,22 @@
+use super::BladePipelines;
 use anyhow::Context as _;
 use blade_graphics as gpu;
+use collections::HashMap;
+use parking_lot::Mutex;
 use std::sync::Arc;
 use util::ResultExt;
 
-#[cfg_attr(target_os = "macos", derive(Clone))]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(super) struct PipelineCacheKey {
+    pub format: gpu::TextureFormat,
+    pub alpha: gpu::AlphaMode,
+    pub path_sample_count: u32,
+}
+
+#[derive(Clone)]
 pub struct BladeContext {
     pub(super) gpu: Arc<gpu::Context>,
+    pub(super) pipelines: Arc<Mutex<HashMap<PipelineCacheKey, Arc<BladePipelines>>>>,
 }
 
 impl BladeContext {
@@ -32,7 +43,32 @@ impl BladeContext {
             }
             .map_err(|e| anyhow::anyhow!("{e:?}"))?,
         );
-        Ok(Self { gpu })
+        Ok(Self {
+            gpu,
+            pipelines: Arc::new(Mutex::new(HashMap::default())),
+        })
+    }
+
+    pub(super) fn get_or_create_pipelines(
+        &self,
+        surface_info: gpu::SurfaceInfo,
+        path_sample_count: u32,
+    ) -> Arc<BladePipelines> {
+        let key = PipelineCacheKey {
+            format: surface_info.format,
+            alpha: surface_info.alpha,
+            path_sample_count,
+        };
+        if let Some(existing) = self.pipelines.lock().get(&key).cloned() {
+            return existing;
+        }
+        let created = Arc::new(BladePipelines::new(
+            Arc::clone(&self.gpu),
+            surface_info,
+            path_sample_count,
+        ));
+        let mut cache = self.pipelines.lock();
+        Arc::clone(cache.entry(key).or_insert(created))
     }
 }
 

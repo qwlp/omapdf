@@ -266,16 +266,19 @@ impl EpubOptions {
 // and reapply each document's options before accessing its lazy EPUB chapters.
 // A background indexer releases this lock between pages. Fair handoff prevents
 // it immediately reacquiring the lock and starving foreground opens/renders.
-static NATIVE_ACCESS: parking_lot::FairMutex<()> = parking_lot::FairMutex::new(());
-type NativeAccess<'a> = parking_lot::FairMutexGuard<'a, ()>;
+static NATIVE_ACCESS: parking_lot::FairMutex<Option<f32>> = parking_lot::FairMutex::new(None);
+type NativeAccess<'a> = parking_lot::FairMutexGuard<'a, Option<f32>>;
 
 pub(crate) fn native_access(options: EpubOptions) -> Result<NativeAccess<'static>> {
-    let guard = NATIVE_ACCESS.lock();
+    let mut guard = NATIVE_ACCESS.lock();
     options.validate()?;
-    let mut context = mupdf::Context::get();
-    context.set_text_aa_level(8);
-    context.set_graphics_aa_level(8);
-    context.set_user_css(&format!("body {{ line-height: {}; margin: 24pt; }} img, svg {{ max-width: 100%; }} pre {{ white-space: pre-wrap; }}", options.line_height))?;
+    if *guard != Some(options.line_height) {
+        let mut context = mupdf::Context::get();
+        context.set_text_aa_level(8);
+        context.set_graphics_aa_level(8);
+        context.set_user_css(&format!("body {{ line-height: {}; margin: 24pt; }} img, svg {{ max-width: 100%; }} pre {{ white-space: pre-wrap; }}", options.line_height))?;
+        *guard = Some(options.line_height);
+    }
     Ok(guard)
 }
 

@@ -99,6 +99,18 @@ impl Default for Config {
     }
 }
 impl Config {
+    pub fn stamp(directory: &Path) -> [Option<(u64, std::time::SystemTime)>; 4] {
+        let names = [
+            "keys.config",
+            "keys_user.config",
+            "prefs.config",
+            "prefs_user.config",
+        ];
+        names.map(|name| {
+            let metadata = std::fs::metadata(directory.join(name)).ok()?;
+            Some((metadata.len(), metadata.modified().ok()?))
+        })
+    }
     pub fn load(directory: &Path) -> Result<Self> {
         let mut config = Self {
             directory: Some(directory.into()),

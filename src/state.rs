@@ -350,6 +350,9 @@ impl Library {
     }
 
     pub fn prune_deleted(&mut self) {
+        if self.deleted_annotations.is_empty() {
+            return;
+        }
         self.expand_deletions();
         let deleted = &self.deleted_annotations;
         let keep = |meta: &AnnotationMeta| {
@@ -486,8 +489,13 @@ impl Library {
             .filter(|p| !p.as_os_str().is_empty())
             .unwrap_or(Path::new("."));
         std::fs::create_dir_all(parent)?;
-        let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
-        serde_json::to_writer_pretty(&mut temporary, self)?;
+        let temporary = tempfile::NamedTempFile::new_in(parent)?;
+        {
+            use std::io::Write;
+            let mut writer = std::io::BufWriter::with_capacity(64 * 1024, temporary.as_file());
+            serde_json::to_writer_pretty(&mut writer, self)?;
+            writer.flush()?;
+        }
         temporary.as_file().sync_all()?;
         temporary.persist(path)?;
         Ok(())
@@ -499,11 +507,16 @@ impl Library {
             .filter(|path| !path.as_os_str().is_empty())
             .unwrap_or(Path::new("."));
         std::fs::create_dir_all(parent)?;
-        let mut backup = tempfile::Builder::new()
+        let backup = tempfile::Builder::new()
             .prefix("omapdf-library-backup-")
             .suffix(".json")
             .tempfile_in(parent)?;
-        serde_json::to_writer_pretty(&mut backup, self)?;
+        {
+            use std::io::Write;
+            let mut writer = std::io::BufWriter::with_capacity(64 * 1024, backup.as_file());
+            serde_json::to_writer_pretty(&mut writer, self)?;
+            writer.flush()?;
+        }
         backup.as_file().sync_all()?;
         let (_, path) = backup.keep()?;
         Ok(path)
@@ -577,6 +590,12 @@ impl History {
 
 /// Apply only this reader's edits to the latest library written by other tabs.
 pub fn merge_library(baseline: &Library, edited: &Library, latest: Library) -> Library {
+    if baseline == edited {
+        return latest;
+    }
+    if baseline == &latest {
+        return edited.clone();
+    }
     let mut edited = edited.clone();
     let mut identities: BTreeMap<String, AnnotationMeta> = BTreeMap::new();
     for meta in latest.annotation_metadata() {

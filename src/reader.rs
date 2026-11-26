@@ -119,8 +119,7 @@ pub struct Reader {
     startup_commands: Vec<String>,
     restore_target: Option<Location>,
     suppress_open_history: bool,
-    requests: std::sync::mpsc::Receiver<omapdf::ipc::Request>,
-    pub opens: Option<std::sync::mpsc::Sender<omapdf::ipc::Request>>,
+    pub opens: Option<omapdf::ipc::SignalSender<omapdf::ipc::Request>>,
     loading: bool,
     loading_path: Option<PathBuf>,
     fit_height: bool,
@@ -167,6 +166,9 @@ pub struct Reader {
     index_cancel: Arc<std::sync::atomic::AtomicBool>,
     search_jump_pending: bool,
     geometry: Option<PageLayout>,
+    layout_cache: Option<(String, LayoutMode, usize, u32, u32, PageLayout)>,
+    last_window_title: String,
+    saved_viewport_hint: Option<(u32, u32)>,
     layout_menu: bool,
     layout_index: usize,
     tracking_scroll: bool,
@@ -236,28 +238,163 @@ pub struct Startup {
     pub library: Library,
     pub library_path: PathBuf,
     pub config: Config,
+    pub rasterizer: Arc<Rasterizer>,
     pub file: Option<PathBuf>,
     pub page: Option<usize>,
     pub commands: Vec<String>,
-    pub requests: std::sync::mpsc::Receiver<omapdf::ipc::Request>,
+    pub requests: omapdf::ipc::SignalReceiver<omapdf::ipc::Request>,
     pub prepared: Option<PreparedOpen>,
 }
 
-/// Start the initial document while GPUI initializes its display and GPU.
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
+struct ViewportHint {
+    width: f32,
+    height: f32,
+    scale: f32,
+}
+
+fn viewport_hint_path() -> Option<PathBuf> {
+    dirs::cache_dir().map(|dir| dir.join("omapdf/viewport-v1.json"))
+}
+
+fn load_viewport_hint() -> ViewportHint {
+    viewport_hint_path()
+        .and_then(|path| std::fs::read(path).ok())
+        .and_then(|bytes| serde_json::from_slice::<ViewportHint>(&bytes).ok())
+        .filter(|hint| {
+            hint.width.is_finite()
+                && hint.height.is_finite()
+                && hint.scale.is_finite()
+                && hint.width >= 300.
+                && hint.height >= 200.
+                && (0.5..=4.0).contains(&hint.scale)
+        })
+        .unwrap_or(ViewportHint {
+            width: 1200.,
+            height: 900.,
+            scale: 1.0,
+        })
+}
+
+fn save_viewport_hint(hint: ViewportHint) {
+    let Some(path) = viewport_hint_path() else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(bytes) = serde_json::to_vec(&hint) {
+        let _ = std::fs::write(path, bytes);
+    }
+}
+
+fn estimate_initial_raster_width(
+    doc: &Document,
+    page_index: usize,
+    config: &Config,
+    saved_zoom: f32,
+    saved_fit: bool,
+) -> u32 {
+    let hint = load_viewport_hint();
+    let (tab_w, tab_h) = if config.horizontal_tabs {
+        (0., crate::workspace::TAB_BAR_HEIGHT)
+    } else {
+        (crate::workspace::TAB_SIDEBAR_WIDTH, 0.)
+    };
+    let viewport_width = (hint.width - tab_w).max(150.);
+    let viewport_height = (hint.height - tab_h - 36.).max(100.);
+    let padding = config.page_padding;
+    let available = (viewport_width - padding * 2.).max(150.);
+    let mode = config.layout;
+    let columns = if mode == LayoutMode::Spread { 2. } else { 1. };
+    let gap = 16.;
+    let page_available = ((available - (columns - 1.) * gap) / columns).max(100.);
+    let fit = if !config.restore_position {
+        true
+    } else {
+        saved_fit || saved_zoom <= 0.
+    };
+    let zoom = if !config.restore_position || saved_zoom <= 0. {
+        1.
+    } else {
+        saved_zoom.clamp(0.2, 5.)
+    };
+    let target_width = if mode == LayoutMode::Horizontal && fit {
+        doc.pages
+            .get(if mode.continuous() { 0 } else { page_index })
+            .map(|page| {
+                ((viewport_height - padding * 2.) * page.width / page.height)
+                    .max(100.)
+                    .min(page_available)
+            })
+            .unwrap_or(page_available)
+    } else if fit {
+        page_available.min(config.max_page_width / columns)
+    } else {
+        800. * zoom
+    };
+    let page_width = if mode == LayoutMode::Horizontal {
+        let first = &doc.pages[0];
+        let page = &doc.pages[page_index];
+        let strip_height = target_width * first.height / first.width;
+        strip_height * page.width / page.height
+    } else {
+        target_width
+    };
+    (page_width * hint.scale).round().clamp(64., 8192.) as u32
+}
+
+/// Start opening and pre-rasterizing the initial document while GPUI initializes its GPU.
 pub struct PreparedOpen {
     path: PathBuf,
-    worker: std::thread::JoinHandle<anyhow::Result<Document>>,
+    worker: std::thread::JoinHandle<anyhow::Result<Arc<Document>>>,
 }
 
 impl PreparedOpen {
-    pub fn new(path: PathBuf, options: omapdf::document::EpubOptions) -> Self {
+    pub fn new(
+        path: PathBuf,
+        page: Option<usize>,
+        config: Config,
+        library_path: PathBuf,
+        rasterizer: Arc<Rasterizer>,
+    ) -> Self {
         let source = path.clone();
         Self {
             path,
-            worker: std::thread::spawn(move || Document::open_preview(&source, options)),
+            worker: std::thread::spawn(move || {
+                let doc = Arc::new(Document::open_preview(&source, config.epub)?);
+                let library = Library::load(&library_path).unwrap_or_default();
+                let saved = library.documents.get(&doc.id);
+                let target_page = page
+                    .unwrap_or(if config.restore_position {
+                        saved.map_or(0, |state| state.page)
+                    } else {
+                        0
+                    })
+                    .min(doc.pages.len() - 1);
+                let width = estimate_initial_raster_width(
+                    &doc,
+                    target_page,
+                    &config,
+                    saved.map_or(1., |state| state.zoom),
+                    saved.is_none_or(|state| state.fit),
+                );
+                if config.document_theme {
+                    let appearance = Appearance::load();
+                    rasterizer.set_palette(Some(DocumentTheme::new(
+                        appearance.background,
+                        appearance.foreground,
+                        appearance.accent,
+                    )));
+                }
+                let _ = rasterizer.render(doc.clone(), target_page, width, config.dark);
+                Ok(doc)
+            }),
         }
     }
 }
+
+static LIBRARY_IO_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
 
 impl Reader {
     pub fn new(startup: Startup, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -265,6 +402,7 @@ impl Reader {
             library,
             library_path,
             config,
+            rasterizer,
             file,
             page,
             commands: startup_commands,
@@ -276,7 +414,6 @@ impl Reader {
         let config_highlights = config.highlights;
         let config_statusbar = config.statusbar;
         let appearance = Appearance::load();
-        let rasterizer = Arc::new(Rasterizer::new());
         rasterizer.set_palette(config.document_theme.then_some(DocumentTheme::new(
             appearance.background,
             appearance.foreground,
@@ -305,7 +442,6 @@ impl Reader {
             startup_commands,
             restore_target: None,
             suppress_open_history: false,
-            requests,
             opens: None,
             loading: false,
             loading_path: None,
@@ -352,6 +488,9 @@ impl Reader {
             index_cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             search_jump_pending: false,
             geometry: None,
+            layout_cache: None,
+            last_window_title: String::new(),
+            saved_viewport_hint: None,
             layout_menu: false,
             layout_index: 0,
             tracking_scroll: false,
@@ -421,16 +560,43 @@ impl Reader {
         }
         cx.on_release(|this, cx| {
             this.raster_tasks.clear();
-            this.rasterizer.shutdown();
             if let Some(helper) = this.helper.take() {
                 let _ = helper.update(cx, |_, window, _| window.remove_window());
             }
         })
         .detach();
+        let ipc_window = window.window_handle();
+        cx.spawn(async move |this, cx| {
+            while let Some(request) = requests.recv_async().await {
+                let mut batch = vec![request];
+                batch.extend(requests.try_iter());
+                if ipc_window
+                    .update(cx, |_, window, cx| {
+                        this.update(cx, |this, cx| {
+                            for request in batch {
+                                if let Some(path) = request.file {
+                                    this.open(path, request.page, cx);
+                                } else if let Some(page) = request.page {
+                                    this.goto(page, true, cx);
+                                }
+                                this.startup_commands.extend(request.commands);
+                            }
+                            this.run_startup_commands(window, cx);
+                        })
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
         let executor = cx.background_executor().clone();
         let reader_window = window.window_handle();
+        let initial_config_stamp = reader.config.directory.as_deref().map(Config::stamp);
         cx.spawn(async move |this, cx| {
             let mut tick = 0u32;
+            let mut config_stamp = initial_config_stamp;
             let mut pending_config: Option<Config> = None;
             let mut config_error: Option<String> = None;
             let mut document_watch: Option<(
@@ -454,16 +620,7 @@ impl Reader {
                             && this.zoom_transition.is_none()
                         {
                             this.scroll_save_pending = false;
-                            this.persist();
-                        }
-                        let requests: Vec<_> = this.requests.try_iter().collect();
-                        for request in requests {
-                            if let Some(path) = request.file {
-                                this.open(path, request.page, cx);
-                            } else if let Some(page) = request.page {
-                                this.goto(page, true, cx);
-                            }
-                            this.startup_commands.extend(request.commands);
+                            this.persist_async(cx);
                         }
                         // Dispatch independently of paint: hidden Wayland windows may not
                         // receive frames, but settings and IPC commands must still execute.
@@ -484,23 +641,36 @@ impl Reader {
                 }) else {
                     break;
                 };
-                let (appearance, shared_preferences) = executor
+                let previous_stamp = config_stamp;
+                let (appearance, next_stamp, shared_preferences) = executor
                     .spawn(async move {
-                        let preferences = directory
-                            .map(|directory| Config::load(&directory))
-                            .transpose();
-                        (appearance.refresh(false), preferences)
+                        let next_stamp = directory.as_deref().map(Config::stamp);
+                        let preferences = if next_stamp != previous_stamp {
+                            directory
+                                .map(|directory| Config::load(&directory))
+                                .transpose()
+                        } else {
+                            Ok(None)
+                        };
+                        (appearance.refresh(false), next_stamp, preferences)
                     })
                     .await;
                 let (shared_preferences, new_error) = match shared_preferences {
                     Ok(Some(shared)) if pending_config.as_ref() == Some(&shared) => {
+                        config_stamp = next_stamp;
                         config_error = None;
                         (Some(shared), None)
                     }
-                    Ok(shared) => {
-                        pending_config = shared;
+                    Ok(Some(shared)) => {
+                        pending_config = Some(shared);
                         config_error = None;
                         (None, None)
+                    }
+                    Ok(None) => {
+                        if pending_config.is_some() {
+                            config_stamp = next_stamp;
+                        }
+                        (pending_config.take(), None)
                     }
                     Err(error) => {
                         pending_config = None;
@@ -617,6 +787,7 @@ impl Reader {
     }
 
     fn run_startup_commands(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let mut ran = false;
         while !self.loading
             && self.pending_unlock.is_none()
             && !self.region_mode
@@ -627,6 +798,10 @@ impl Reader {
         {
             let command = self.startup_commands.remove(0);
             self.execute(&command, window, cx);
+            ran = true;
+        }
+        if ran && self.startup_commands.is_empty() && self.library != self.library_baseline {
+            self.persist_async(cx);
         }
     }
 
@@ -640,6 +815,7 @@ impl Reader {
             state.fit = self.fit;
             state.offset = offset;
         }
+        let _io = LIBRARY_IO_LOCK.lock();
         if let Ok(latest) = Library::load(&self.library_path) {
             self.library =
                 omapdf::state::merge_library(&self.library_baseline, &self.library, latest);
@@ -655,6 +831,47 @@ impl Reader {
                 false
             }
         }
+    }
+
+    fn persist_async(&mut self, cx: &mut Context<Self>) {
+        self.library.normalize_ids();
+        let offset = self.local_offset();
+        if let Some(doc) = &self.document {
+            let state = self.library.documents.entry(doc.id.clone()).or_default();
+            state.page = self.page;
+            state.zoom = self.zoom;
+            state.fit = self.fit;
+            state.offset = offset;
+        }
+        if self.library == self.library_baseline && self.library_path.exists() {
+            return;
+        }
+        let baseline = self.library_baseline.clone();
+        let edited = self.library.clone();
+        let path = self.library_path.clone();
+        let task = cx.background_executor().spawn(async move {
+            let _io = LIBRARY_IO_LOCK.lock();
+            let mut merged = match Library::load(&path) {
+                Ok(latest) => omapdf::state::merge_library(&baseline, &edited, latest),
+                Err(_) => edited,
+            };
+            merged.prune_deleted();
+            merged.save(&path)?;
+            Ok::<Library, anyhow::Error>(merged)
+        });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |this, cx| match result {
+                Ok(saved) => {
+                    this.library_baseline = saved;
+                }
+                Err(error) => {
+                    this.set_status(format!("Cannot save library: {error:#}"));
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
     fn location(&self) -> Option<Location> {
@@ -689,7 +906,9 @@ impl Reader {
             self.prompt = None;
             self.input = TextBuffer::default();
         }
-        self.persist();
+        if self.document.is_some() || self.library != self.library_baseline {
+            self.persist_async(cx);
+        }
         self.close_visual_mark();
         self.close_preview();
         self.collapsed_headings.clear();
@@ -724,9 +943,36 @@ impl Reader {
             .take()
             .filter(|prepared| prepared.path == path && password.is_none());
         let previous = self.document.clone();
-        let task = cx.background_executor().spawn(async move {
-            let document = match (prepared, password) {
-                (Some(prepared), _) => {
+        // Fast path: if the initial document opened & pre-rasterized while GPUI
+        // initialized Vulkan, install it immediately so Frame 1 paints the page
+        // directly without an empty "Opening..." frame or async round-trip.
+        if previous.is_none()
+            && let Some(prepared) = prepared
+        {
+            if prepared.worker.is_finished() {
+                let immediate = prepared
+                    .worker
+                    .join()
+                    .map_err(|_| anyhow::anyhow!("Initial document worker failed"))
+                    .and_then(|res| res);
+                match immediate {
+                    Ok(doc)
+                        if omapdf::reload::Revision::read(&path).ok() == Some(doc.revision)
+                            && doc.epub_options == options =>
+                    {
+                        self.finish_open(Ok(doc), pending_path, page, restore, record, cx);
+                        cx.notify();
+                        return;
+                    }
+                    Err(error) => {
+                        self.finish_open(Err(error), pending_path, page, restore, record, cx);
+                        cx.notify();
+                        return;
+                    }
+                    Ok(_) => {}
+                }
+            } else {
+                let task = cx.background_executor().spawn(async move {
                     let result = prepared
                         .worker
                         .join()
@@ -738,12 +984,37 @@ impl Reader {
                         {
                             Ok(doc)
                         }
-                        Ok(_) => Document::open_preview(&path, options),
+                        Ok(_) => Ok(Arc::new(Document::open_preview(&path, options)?)),
                         Err(error) => Err(error),
                     }
-                }
-                (None, Some(password)) => Document::unlock_preview(&path, options, password),
-                (None, None) => Document::open_preview(&path, options),
+                });
+                let reader_window = self.window;
+                cx.spawn(async move |this, cx| {
+                    let result = task.await;
+                    let _ = this.update(cx, |this, cx| {
+                        if this.open_generation != generation {
+                            return;
+                        }
+                        this.finish_open(result, pending_path, page, restore, record, cx);
+                        cx.notify();
+                    });
+                    let _ = reader_window.update(cx, |_, window, cx| {
+                        this.update(cx, |this, cx| {
+                            if this.open_generation == generation {
+                                this.run_startup_commands(window, cx);
+                            }
+                        })
+                    });
+                })
+                .detach();
+                cx.notify();
+                return;
+            }
+        }
+        let task = cx.background_executor().spawn(async move {
+            let document = match password {
+                Some(password) => Document::unlock_preview(&path, options, password),
+                None => Document::open_preview(&path, options),
             }?;
             // Reflow migration needs text anchors from both versions. Ordinary
             // EPUB opens remain lazy; perform migration indexing off the UI thread.
@@ -765,192 +1036,7 @@ impl Reader {
                 if this.open_generation != generation {
                     return;
                 }
-                this.loading = false;
-                this.loading_path = None;
-                match result {
-                    Ok(doc) => {
-                        if record && let Some(location) = this.location() {
-                            this.history.push(location);
-                        }
-                        if let Some(previous) = &this.document
-                            && previous.path == doc.path
-                            && previous.id != doc.id
-                        {
-                            if let Some(mut state) =
-                                this.library.documents.get(&previous.id).cloned()
-                            {
-                                let reflow = previous.reflowable && doc.reflowable;
-                                if reflow {
-                                    let at = Location {
-                                        document: previous.id.clone(),
-                                        page: state.page,
-                                        zoom: state.zoom,
-                                        fit: state.fit,
-                                        offset: state.offset,
-                                    };
-                                    let mapped = doc.remap_location(previous, &at);
-                                    state.page = mapped.page;
-                                    state.offset = mapped.offset;
-                                    state.highlights = state
-                                        .highlights
-                                        .iter()
-                                        .filter_map(|highlight| {
-                                            let (page, start, end) = doc.find_text_near(
-                                                &highlight.text,
-                                                highlight.page as f32 / previous.pages.len() as f32,
-                                            )?;
-                                            let mut mapped = highlight.clone();
-                                            mapped.page = page;
-                                            mapped.rects = doc.pages[page].words[start..end]
-                                                .iter()
-                                                .map(|word| word.rect)
-                                                .collect();
-                                            Some(mapped)
-                                        })
-                                        .collect();
-                                }
-                                for mark in state.marks.values_mut() {
-                                    if mark.document == previous.id {
-                                        if reflow {
-                                            *mark = doc.remap_location(previous, mark);
-                                        } else {
-                                            mark.document = doc.id.clone();
-                                        }
-                                    }
-                                }
-                                for portal in &mut state.portals {
-                                    if reflow {
-                                        let source = doc.remap_location(
-                                            previous,
-                                            &Location {
-                                                document: previous.id.clone(),
-                                                page: portal.source_page,
-                                                offset: portal.source_offset.unwrap_or_default(),
-                                                ..Default::default()
-                                            },
-                                        );
-                                        portal.source_page = source.page;
-                                        portal.source_offset = Some(source.offset);
-                                    }
-                                    if portal.destination.document == previous.id {
-                                        if reflow {
-                                            portal.destination =
-                                                doc.remap_location(previous, &portal.destination);
-                                        } else {
-                                            portal.destination.document = doc.id.clone();
-                                        }
-                                    }
-                                }
-                                this.library.documents.insert(doc.id.clone(), state);
-                            }
-                            for mark in this.library.global_marks.values_mut() {
-                                if mark.document == previous.id {
-                                    if previous.reflowable && doc.reflowable {
-                                        *mark = doc.remap_location(previous, mark);
-                                    } else {
-                                        mark.document = doc.id.clone();
-                                    }
-                                }
-                            }
-                            for bookmark in &mut this.library.bookmarks {
-                                if bookmark.location.document == previous.id {
-                                    if previous.reflowable && doc.reflowable {
-                                        bookmark.location =
-                                            doc.remap_location(previous, &bookmark.location);
-                                    } else {
-                                        bookmark.location.document = doc.id.clone();
-                                    }
-                                }
-                            }
-                            for state in this.library.documents.values_mut() {
-                                for portal in &mut state.portals {
-                                    if portal.destination.document == previous.id {
-                                        if previous.reflowable && doc.reflowable {
-                                            portal.destination =
-                                                doc.remap_location(previous, &portal.destination);
-                                        } else {
-                                            portal.destination.document = doc.id.clone();
-                                            portal.destination.page =
-                                                portal.destination.page.min(doc.pages.len() - 1);
-                                        }
-                                    }
-                                }
-                            }
-                            this.library.recent.retain(|id| id != &previous.id);
-                        }
-                        this.library.touch(&doc.id, &doc.path);
-                        let saved = &this.library.documents[&doc.id];
-                        this.page = page
-                            .unwrap_or(if this.config.restore_position {
-                                saved.page
-                            } else {
-                                0
-                            })
-                            .min(doc.pages.len() - 1);
-                        this.zoom = if saved.zoom > 0. {
-                            saved.zoom.clamp(0.2, 5.)
-                        } else {
-                            1.
-                        };
-                        this.fit = saved.fit || saved.zoom <= 0.;
-                        if !this.config.restore_position && page.is_none() {
-                            this.zoom = 1.;
-                            this.fit = true;
-                        }
-                        this.pending_offset = if page.is_none() && this.config.restore_position {
-                            Some(saved.offset)
-                        } else {
-                            Some([0., 0.])
-                        };
-                        if let Some(location) = restore {
-                            let location = this
-                                .document
-                                .as_ref()
-                                .filter(|previous| previous.reflowable && doc.reflowable)
-                                .map(|previous| doc.remap_location(previous, &location))
-                                .unwrap_or(location);
-                            this.page = location.page.min(doc.pages.len() - 1);
-                            this.zoom = location.zoom.clamp(0.2, 5.);
-                            this.fit = location.fit;
-                            this.pending_offset = Some(location.offset);
-                        }
-                        this.collapsed_headings = omapdf::outline::collapsed_branches(&doc.outline);
-                        this.document = Some(doc);
-                        this.prepare_text_index(cx);
-                        this.selection = None;
-                        this.matches.clear();
-                        this.query.clear();
-                        this.preview = None;
-
-                        this.image = None;
-                        this.rasters_dirty = true;
-                        this.geometry = None;
-                        this.selection_page = None;
-                        this.selection_end_page = None;
-                        this.set_status("Ready".into());
-                        this.persist();
-                    }
-                    Err(error) => {
-                        if let Some(required) =
-                            error.downcast_ref::<omapdf::document::PasswordRequired>()
-                        {
-                            this.pending_unlock = Some(UnlockRequest {
-                                path: pending_path,
-                                page,
-                                restore,
-                                record,
-                            });
-                            this.panel = None;
-                            this.layout_menu = false;
-                            this.prompt(Prompt::Password, cx);
-                            this.set_status(required.to_string());
-                        } else {
-                            this.set_status(format!("{error:#}"));
-                        }
-                        this.rasters_dirty = true;
-                        this.prepare_text_index(cx);
-                    }
-                }
+                this.finish_open(result, pending_path, page, restore, record, cx);
                 cx.notify();
             });
             // Loading completion is an event: initial commands need not wait
@@ -965,6 +1051,202 @@ impl Reader {
         })
         .detach();
         cx.notify();
+    }
+
+    fn finish_open(
+        &mut self,
+        result: anyhow::Result<Arc<Document>>,
+        pending_path: PathBuf,
+        page: Option<usize>,
+        restore: Option<Location>,
+        record: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.loading = false;
+        self.loading_path = None;
+        match result {
+            Ok(doc) => {
+                if record && let Some(location) = self.location() {
+                    self.history.push(location);
+                }
+                if let Some(previous) = &self.document
+                    && previous.path == doc.path
+                    && previous.id != doc.id
+                {
+                    if let Some(mut state) = self.library.documents.get(&previous.id).cloned() {
+                        let reflow = previous.reflowable && doc.reflowable;
+                        if reflow {
+                            let at = Location {
+                                document: previous.id.clone(),
+                                page: state.page,
+                                zoom: state.zoom,
+                                fit: state.fit,
+                                offset: state.offset,
+                            };
+                            let mapped = doc.remap_location(previous, &at);
+                            state.page = mapped.page;
+                            state.offset = mapped.offset;
+                            state.highlights = state
+                                .highlights
+                                .iter()
+                                .filter_map(|highlight| {
+                                    let (page, start, end) = doc.find_text_near(
+                                        &highlight.text,
+                                        highlight.page as f32 / previous.pages.len() as f32,
+                                    )?;
+                                    let mut mapped = highlight.clone();
+                                    mapped.page = page;
+                                    mapped.rects = doc.pages[page].words[start..end]
+                                        .iter()
+                                        .map(|word| word.rect)
+                                        .collect();
+                                    Some(mapped)
+                                })
+                                .collect();
+                        }
+                        for mark in state.marks.values_mut() {
+                            if mark.document == previous.id {
+                                if reflow {
+                                    *mark = doc.remap_location(previous, mark);
+                                } else {
+                                    mark.document = doc.id.clone();
+                                }
+                            }
+                        }
+                        for portal in &mut state.portals {
+                            if reflow {
+                                let source = doc.remap_location(
+                                    previous,
+                                    &Location {
+                                        document: previous.id.clone(),
+                                        page: portal.source_page,
+                                        offset: portal.source_offset.unwrap_or_default(),
+                                        ..Default::default()
+                                    },
+                                );
+                                portal.source_page = source.page;
+                                portal.source_offset = Some(source.offset);
+                            }
+                            if portal.destination.document == previous.id {
+                                if reflow {
+                                    portal.destination =
+                                        doc.remap_location(previous, &portal.destination);
+                                } else {
+                                    portal.destination.document = doc.id.clone();
+                                }
+                            }
+                        }
+                        self.library.documents.insert(doc.id.clone(), state);
+                    }
+                    for mark in self.library.global_marks.values_mut() {
+                        if mark.document == previous.id {
+                            if previous.reflowable && doc.reflowable {
+                                *mark = doc.remap_location(previous, mark);
+                            } else {
+                                mark.document = doc.id.clone();
+                            }
+                        }
+                    }
+                    for bookmark in &mut self.library.bookmarks {
+                        if bookmark.location.document == previous.id {
+                            if previous.reflowable && doc.reflowable {
+                                bookmark.location =
+                                    doc.remap_location(previous, &bookmark.location);
+                            } else {
+                                bookmark.location.document = doc.id.clone();
+                            }
+                        }
+                    }
+                    for state in self.library.documents.values_mut() {
+                        for portal in &mut state.portals {
+                            if portal.destination.document == previous.id {
+                                if previous.reflowable && doc.reflowable {
+                                    portal.destination =
+                                        doc.remap_location(previous, &portal.destination);
+                                } else {
+                                    portal.destination.document = doc.id.clone();
+                                    portal.destination.page =
+                                        portal.destination.page.min(doc.pages.len() - 1);
+                                }
+                            }
+                        }
+                    }
+                    self.library.recent.retain(|id| id != &previous.id);
+                }
+                self.library.touch(&doc.id, &doc.path);
+                let saved = &self.library.documents[&doc.id];
+                self.page = page
+                    .unwrap_or(if self.config.restore_position {
+                        saved.page
+                    } else {
+                        0
+                    })
+                    .min(doc.pages.len() - 1);
+                self.zoom = if saved.zoom > 0. {
+                    saved.zoom.clamp(0.2, 5.)
+                } else {
+                    1.
+                };
+                self.fit = saved.fit || saved.zoom <= 0.;
+                if !self.config.restore_position && page.is_none() {
+                    self.zoom = 1.;
+                    self.fit = true;
+                }
+                self.pending_offset = if page.is_none() && self.config.restore_position {
+                    Some(saved.offset)
+                } else {
+                    Some([0., 0.])
+                };
+                if let Some(location) = restore {
+                    let location = self
+                        .document
+                        .as_ref()
+                        .filter(|previous| previous.reflowable && doc.reflowable)
+                        .map(|previous| doc.remap_location(previous, &location))
+                        .unwrap_or(location);
+                    self.page = location.page.min(doc.pages.len() - 1);
+                    self.zoom = location.zoom.clamp(0.2, 5.);
+                    self.fit = location.fit;
+                    self.pending_offset = Some(location.offset);
+                }
+                self.collapsed_headings = omapdf::outline::collapsed_branches(&doc.outline);
+                self.document = Some(doc);
+                self.prepare_text_index(cx);
+                self.selection = None;
+                self.matches.clear();
+                self.query.clear();
+                self.preview = None;
+
+                self.image = None;
+                self.rasters_dirty = true;
+                self.geometry = None;
+                self.layout_cache = None;
+                self.selection_page = None;
+                self.selection_end_page = None;
+                self.set_status("Ready".into());
+                if self.startup_commands.is_empty() {
+                    self.persist_async(cx);
+                }
+            }
+            Err(error) => {
+                if let Some(required) = error.downcast_ref::<omapdf::document::PasswordRequired>() {
+                    self.pending_unlock = Some(UnlockRequest {
+                        path: pending_path,
+                        page,
+                        restore,
+                        record,
+                    });
+                    self.panel = None;
+                    self.layout_menu = false;
+                    self.prompt(Prompt::Password, cx);
+                    self.set_status(required.to_string());
+                } else {
+                    self.set_status(format!("{error:#}"));
+                }
+                self.rasters_dirty = true;
+                self.prepare_text_index(cx);
+            }
+        }
     }
 
     pub fn receive_request(&mut self, request: omapdf::ipc::Request, cx: &mut Context<Self>) {
@@ -1164,6 +1446,18 @@ impl Reader {
             self.raster_images.insert(page, (width, image));
             return;
         }
+        let mut had_image = self.raster_images.contains_key(&page);
+        let mut seeded_fallback = false;
+        if !had_image
+            && let Some((cached_width, image)) =
+                self.rasterizer.cached_nearest(&doc, page, width, self.dark)
+        {
+            // Show pre-rasterized or previous-width page immediately on Frame 1
+            // while upgrading to the exact device-pixel width without delay.
+            self.raster_images.insert(page, (cached_width, image));
+            had_image = true;
+            seeded_fallback = true;
+        }
         if self
             .raster_tasks
             .get(&page)
@@ -1176,7 +1470,9 @@ impl Reader {
         let rasterizer = self.rasterizer.clone();
         let dark = self.dark;
         let executor = cx.background_executor().clone();
-        let debounce = !self.raster_images.is_empty();
+        // Debounce only when resizing/zooming an already-visible page, never
+        // for a newly scrolled-in page or an initial pre-rasterized upgrade.
+        let debounce = had_image && !seeded_fallback;
         let task = cx.spawn(async move |this, cx| {
             // Keep the existing image during resize/zoom bursts; only the latest
             // settled size should enter the native renderer's work queue.
@@ -1278,7 +1574,7 @@ impl Reader {
         self.selection_end_page = None;
         self.pending_offset = Some([0., 0.]);
         self.scroll.set_offset(point(px(0.), px(0.)));
-        self.persist();
+        self.persist_async(cx);
         if self.helper.is_some()
             && let Some(location) = self.nearest_portal()
         {
@@ -3021,7 +3317,6 @@ impl Reader {
             "import_annotations" => self.import_annotations(cx),
             "q" | "quit" => {
                 self.raster_tasks.clear();
-                self.rasterizer.shutdown();
                 self.persist();
                 cx.quit();
             }
@@ -5304,29 +5599,37 @@ impl Reader {
             let selected_range = self
                 .text_span()
                 .and_then(|span| span.range(page_index, page.words.len()));
-            for (index, word) in page.words.iter().enumerate() {
-                let selected = selected_range
-                    .as_ref()
-                    .is_some_and(|range| range.contains(&index));
-                let matched = !selected
-                    && self
-                        .matches
-                        .iter()
-                        .any(|&(p, a, b)| p == page_index && index >= a && index < b);
-                if !selected && !matched {
-                    continue;
-                }
-                let saved = self.show_highlights
-                    && highlights
-                        .iter()
-                        .any(|h| h.page == page_index && h.rects.contains(&word.rect));
-                if saved {
-                    continue;
-                }
-                if selected {
-                    selected_rects.push(word.rect);
-                } else {
-                    matched_rects.push(word.rect);
+            let page_matches = if self.matches.is_empty() {
+                &[][..]
+            } else {
+                let start = self.matches.partition_point(|&(p, _, _)| p < page_index);
+                let end = self.matches[start..].partition_point(|&(p, _, _)| p == page_index);
+                &self.matches[start..start + end]
+            };
+            if selected_range.is_some() || !page_matches.is_empty() {
+                for (index, word) in page.words.iter().enumerate() {
+                    let selected = selected_range
+                        .as_ref()
+                        .is_some_and(|range| range.contains(&index));
+                    let matched = !selected
+                        && page_matches
+                            .iter()
+                            .any(|&(_, a, b)| index >= a && index < b);
+                    if !selected && !matched {
+                        continue;
+                    }
+                    let saved = self.show_highlights
+                        && highlights
+                            .iter()
+                            .any(|h| h.page == page_index && h.rects.contains(&word.rect));
+                    if saved {
+                        continue;
+                    }
+                    if selected {
+                        selected_rects.push(word.rect);
+                    } else {
+                        matched_rects.push(word.rect);
+                    }
                 }
             }
             for (rects, color) in [
@@ -6247,13 +6550,15 @@ impl Render for Reader {
         if self.helper.is_some_and(|helper| helper.read(cx).is_err()) {
             self.helper = None;
         }
-        window.set_window_title(
-            &self
-                .document
-                .as_ref()
-                .map(|doc| format!("{} — Omapdf", doc.title))
-                .unwrap_or_else(|| "Omapdf".into()),
-        );
+        let window_title = self
+            .document
+            .as_ref()
+            .map(|doc| format!("{} — Omapdf", doc.title))
+            .unwrap_or_else(|| "Omapdf".into());
+        if self.last_window_title != window_title {
+            window.set_window_title(&window_title);
+            self.last_window_title = window_title;
+        }
         let now = std::time::Instant::now();
         self.animate_menus(now, window, cx);
         let enabled = self.config.animations;
@@ -6388,7 +6693,47 @@ impl Render for Reader {
         }
         let page_view: AnyElement;
         if let Some(doc) = self.document.clone() {
-            let layout = PageLayout::new(&doc.pages, mode, self.page, width, gap);
+            let full_viewport = window.viewport_size();
+            let scale_factor = window.scale_factor();
+            let hint_key = (
+                f32::from(full_viewport.width).round() as u32,
+                (scale_factor * 100.).round() as u32,
+            );
+            if hint_key.0 >= 300 && self.saved_viewport_hint != Some(hint_key) {
+                self.saved_viewport_hint = Some(hint_key);
+                let hint = ViewportHint {
+                    width: f32::from(full_viewport.width),
+                    height: f32::from(full_viewport.height),
+                    scale: scale_factor,
+                };
+                cx.background_executor()
+                    .spawn(async move { save_viewport_hint(hint) })
+                    .detach();
+            }
+            let layout_page = if mode.continuous() { 0 } else { self.page };
+            let layout = match &self.layout_cache {
+                Some((id, cached_mode, cached_page, cached_w, cached_gap, cached))
+                    if *id == doc.id
+                        && *cached_mode == mode
+                        && *cached_page == layout_page
+                        && *cached_w == width.to_bits()
+                        && *cached_gap == gap.to_bits() =>
+                {
+                    cached.clone()
+                }
+                _ => {
+                    let built = PageLayout::new(&doc.pages, mode, self.page, width, gap);
+                    self.layout_cache = Some((
+                        doc.id.clone(),
+                        mode,
+                        layout_page,
+                        width.to_bits(),
+                        gap.to_bits(),
+                        built.clone(),
+                    ));
+                    built
+                }
+            };
             let content_width = (layout.width + padding * 2.).max(viewport_width);
             let content_height = (layout.height + padding * 2.).max(viewport_height);
             let center_x = (content_width - layout.width) / 2.;
@@ -6446,12 +6791,51 @@ impl Render for Reader {
                 .retain(|page, _| visible.iter().any(|p| p.page == *page));
             self.raster_tasks
                 .retain(|page, _| visible.iter().any(|p| p.page == *page));
+            let mut current_raster_width = None;
             for page in &visible {
                 self.request_page_text(page.page, cx);
-                let raster_width = (page.width * target_width / width * window.scale_factor())
+                let raster_width = (page.width * target_width / width * scale_factor)
                     .round()
                     .clamp(64., 8192.) as u32;
+                if page.page == self.page {
+                    current_raster_width = Some(raster_width);
+                }
                 self.rasterize_page(page.page, raster_width, cx);
+            }
+            // Prefetch neighboring pages once the current page is ready so page
+            // turns and continuous scrolling resolve directly from cache.
+            if !zoom_active
+                && let Some(active_width) = current_raster_width
+                && self
+                    .raster_images
+                    .get(&self.page)
+                    .is_some_and(|(w, _)| *w == active_width)
+            {
+                let step = mode.step();
+                let mut candidates = [
+                    self.page.checked_add(step),
+                    self.page.checked_add(step * 2),
+                    self.page.checked_sub(step),
+                ];
+                if mode == LayoutMode::Spread {
+                    candidates[1] = self.page.checked_add(step + 1);
+                }
+                for neighbor in candidates.into_iter().flatten() {
+                    if neighbor < doc.pages.len() && !visible.iter().any(|p| p.page == neighbor) {
+                        let neighbor_width = if mode == LayoutMode::Horizontal {
+                            let first = &doc.pages[0];
+                            let p = &doc.pages[neighbor];
+                            let strip_h = target_width * first.height / first.width;
+                            (strip_h * p.width / p.height * scale_factor)
+                                .round()
+                                .clamp(64., 8192.) as u32
+                        } else {
+                            active_width
+                        };
+                        self.rasterizer
+                            .prefetch(doc.clone(), neighbor, neighbor_width, self.dark);
+                    }
+                }
             }
             self.image = self
                 .raster_images
@@ -7192,8 +7576,9 @@ impl Drop for Reader {
         self.index_cancel
             .store(true, std::sync::atomic::Ordering::Relaxed);
         self.raster_tasks.clear();
-        self.rasterizer.shutdown();
-        self.persist();
+        if self.document.is_some() || self.library != self.library_baseline {
+            self.persist();
+        }
     }
 }
 

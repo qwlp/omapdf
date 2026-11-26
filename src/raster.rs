@@ -3,6 +3,7 @@
 use crate::{document::Document, document_theme::DocumentTheme};
 use anyhow::{Context, Result};
 use gpui::RenderImage;
+use parking_lot::{Condvar, Mutex as FastMutex};
 use std::{
     collections::VecDeque,
     sync::{
@@ -10,7 +11,6 @@ use std::{
         atomic::{AtomicBool, AtomicU8, AtomicU16, Ordering},
         mpsc,
     },
-    time::Duration,
 };
 
 #[derive(Clone, PartialEq, Eq)]
@@ -42,6 +42,21 @@ impl Cache {
         self.entries.push_front(entry);
         Some(image)
     }
+    fn get_nearest(&self, key: &Key) -> Option<(u32, Arc<RenderImage>)> {
+        self.entries
+            .iter()
+            .filter(|entry| {
+                entry.key.document == key.document
+                    && entry.key.page == key.page
+                    && entry.key.dark == key.dark
+                    && entry.key.contrast == key.contrast
+                    && entry.key.quality == key.quality
+                    && entry.key.sharpness == key.sharpness
+                    && entry.key.theme == key.theme
+            })
+            .min_by_key(|entry| entry.key.width.abs_diff(key.width))
+            .map(|entry| (entry.key.width, entry.image.clone()))
+    }
     fn insert(&mut self, key: Key, image: Arc<RenderImage>) {
         if self.entries.iter().any(|entry| entry.key == key) {
             return;
@@ -49,7 +64,7 @@ impl Cache {
         let bytes = image.as_bytes(0).map_or(0, <[u8]>::len);
         self.bytes += bytes;
         self.entries.push_front(Entry { key, image, bytes });
-        while self.bytes > 128 * 1024 * 1024 && self.entries.len() > 1 {
+        while self.bytes > 192 * 1024 * 1024 && self.entries.len() > 1 {
             if let Some(entry) = self.entries.pop_back() {
                 self.bytes -= entry.bytes;
             }
@@ -62,6 +77,13 @@ struct Work {
     reply: Option<mpsc::Sender<Result<Arc<RenderImage>>>>,
 }
 
+#[derive(Default)]
+struct Queue {
+    foreground: VecDeque<Work>,
+    prefetch: VecDeque<Work>,
+    stop: bool,
+}
+
 pub struct Rasterizer {
     stop: Arc<AtomicBool>,
     worker: Mutex<Option<std::thread::JoinHandle<()>>>,
@@ -69,9 +91,8 @@ pub struct Rasterizer {
     quality: AtomicU16,
     sharpness: AtomicU8,
     theme: Mutex<Option<DocumentTheme>>,
-    foreground: mpsc::Sender<Work>,
-    background: mpsc::SyncSender<Work>,
-    cache: Arc<Mutex<Cache>>,
+    queue: Arc<(FastMutex<Queue>, Condvar)>,
+    cache: Arc<FastMutex<Cache>>,
 }
 impl Default for Rasterizer {
     fn default() -> Self {
@@ -80,9 +101,9 @@ impl Default for Rasterizer {
 }
 impl Rasterizer {
     pub fn new() -> Self {
-        let (foreground, requests) = mpsc::channel::<Work>();
-        let (background, prefetch) = mpsc::sync_channel::<Work>(2);
-        let cache = Arc::new(Mutex::new(Cache::default()));
+        let queue = Arc::new((FastMutex::new(Queue::default()), Condvar::new()));
+        let worker_queue = queue.clone();
+        let cache = Arc::new(FastMutex::new(Cache::default()));
         let worker_cache = cache.clone();
         let stop = Arc::new(AtomicBool::new(false));
         let worker_stop = stop.clone();
@@ -90,20 +111,26 @@ impl Rasterizer {
             .name("pdf-raster".into())
             .spawn(move || {
                 let mut documents: VecDeque<(String, NativeDocument)> = VecDeque::new();
+                let mut resizer = fast_image_resize::Resizer::new();
+                let (lock, condvar) = &*worker_queue;
                 loop {
-                    if worker_stop.load(Ordering::Acquire) {
-                        break;
-                    }
-                    let work = match requests.recv_timeout(Duration::from_millis(2)) {
-                        Ok(work) => work,
-                        Err(mpsc::RecvTimeoutError::Disconnected) => break,
-                        Err(mpsc::RecvTimeoutError::Timeout) => match prefetch.try_recv() {
-                            Ok(work) => work,
-                            Err(_) => continue,
-                        },
+                    let work = {
+                        let mut state = lock.lock();
+                        loop {
+                            if state.stop || worker_stop.load(Ordering::Acquire) {
+                                return;
+                            }
+                            if let Some(work) = state.foreground.pop_front() {
+                                break work;
+                            }
+                            if let Some(work) = state.prefetch.pop_front() {
+                                break work;
+                            }
+                            condvar.wait(&mut state);
+                        }
                     };
                     let result = (|| {
-                        if let Some(image) = worker_cache.lock().unwrap().get(&work.key) {
+                        if let Some(image) = worker_cache.lock().get(&work.key) {
                             return Ok(image);
                         }
                         let index = documents
@@ -117,7 +144,7 @@ impl Rasterizer {
                                 work.key.document.clone(),
                                 NativeDocument::open(&work.document)?,
                             ));
-                            documents.truncate(2);
+                            documents.truncate(4);
                         }
                         let page = work
                             .document
@@ -152,8 +179,7 @@ impl Rasterizer {
                             source
                         } else {
                             use fast_image_resize::{
-                                FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer,
-                                images::Image,
+                                FilterType, PixelType, ResizeAlg, ResizeOptions, images::Image,
                             };
                             let input = Image::from_vec_u8(
                                 source.width(),
@@ -167,7 +193,7 @@ impl Rasterizer {
                             let options = ResizeOptions::new()
                                 .resize_alg(ResizeAlg::Convolution(FilterType::Lanczos3))
                                 .use_alpha(false);
-                            Resizer::new().resize(&input, &mut output, &options)?;
+                            resizer.resize(&input, &mut output, &options)?;
                             image::RgbaImage::from_raw(
                                 work.key.width,
                                 final_height,
@@ -186,7 +212,7 @@ impl Rasterizer {
                             }
                         }
                         let image = Arc::new(RenderImage::new(vec![image::Frame::new(pixels)]));
-                        worker_cache.lock().unwrap().insert(work.key, image.clone());
+                        worker_cache.lock().insert(work.key, image.clone());
                         Ok(image)
                     })();
                     if let Some(reply) = work.reply {
@@ -202,13 +228,20 @@ impl Rasterizer {
             quality: AtomicU16::new(100),
             sharpness: AtomicU8::new(0),
             theme: Mutex::new(None),
-            foreground,
-            background,
+            queue,
             cache,
         }
     }
     pub fn shutdown(&self) {
         self.stop.store(true, Ordering::Release);
+        {
+            let (lock, condvar) = &*self.queue;
+            let mut state = lock.lock();
+            state.stop = true;
+            state.foreground.clear();
+            state.prefetch.clear();
+            condvar.notify_all();
+        }
         // Native page rendering cannot be interrupted mid-call. The worker owns
         // its documents, cache and stop flag, so let it finish the current call
         // without blocking the UI on tab close or application quit. Dropping the
@@ -242,14 +275,8 @@ impl Rasterizer {
             Ordering::Relaxed,
         );
     }
-    pub fn cached(
-        &self,
-        document: &Document,
-        page: usize,
-        width: u32,
-        dark: bool,
-    ) -> Option<Arc<RenderImage>> {
-        self.cache.lock().unwrap().get(&Key {
+    fn make_key(&self, document: &Document, page: usize, width: u32, dark: bool) -> Key {
+        Key {
             document: document.id.clone(),
             page,
             width,
@@ -262,7 +289,27 @@ impl Rasterizer {
             } else {
                 255
             },
-        })
+        }
+    }
+    pub fn cached(
+        &self,
+        document: &Document,
+        page: usize,
+        width: u32,
+        dark: bool,
+    ) -> Option<Arc<RenderImage>> {
+        let key = self.make_key(document, page, width, dark);
+        self.cache.lock().get(&key)
+    }
+    pub fn cached_nearest(
+        &self,
+        document: &Document,
+        page: usize,
+        width: u32,
+        dark: bool,
+    ) -> Option<(u32, Arc<RenderImage>)> {
+        let key = self.make_key(document, page, width, dark);
+        self.cache.lock().get_nearest(&key)
     }
     pub fn render(
         &self,
@@ -272,56 +319,46 @@ impl Rasterizer {
         dark: bool,
     ) -> Result<Arc<RenderImage>> {
         anyhow::ensure!(!self.stop.load(Ordering::Acquire), "PDF renderer is closed");
-        if let Some(image) = self.cached(&document, page, width, dark) {
+        let key = self.make_key(&document, page, width, dark);
+        if let Some(image) = self.cache.lock().get(&key) {
             return Ok(image);
         }
         let (reply, result) = mpsc::channel();
-        let key = Key {
-            document: document.id.clone(),
-            page,
-            width,
-            dark,
-            quality: self.quality.load(Ordering::Relaxed),
-            sharpness: self.sharpness.load(Ordering::Relaxed),
-            theme: self.theme(),
-            contrast: if dark {
-                self.contrast.load(Ordering::Relaxed)
-            } else {
-                255
-            },
-        };
-        self.foreground
-            .send(Work {
+        {
+            let (lock, condvar) = &*self.queue;
+            let mut state = lock.lock();
+            anyhow::ensure!(!state.stop, "PDF worker stopped");
+            state.foreground.push_back(Work {
                 document,
                 key,
                 reply: Some(reply),
-            })
-            .context("PDF worker stopped")?;
+            });
+            condvar.notify_one();
+        }
         result.recv().context("PDF worker stopped")?
     }
     pub fn prefetch(&self, document: Arc<Document>, page: usize, width: u32, dark: bool) {
-        if page >= document.pages.len() || self.cached(&document, page, width, dark).is_some() {
+        if self.stop.load(Ordering::Acquire) || page >= document.pages.len() {
             return;
         }
-        let key = Key {
-            document: document.id.clone(),
-            page,
-            width,
-            dark,
-            quality: self.quality.load(Ordering::Relaxed),
-            sharpness: self.sharpness.load(Ordering::Relaxed),
-            theme: self.theme(),
-            contrast: if dark {
-                self.contrast.load(Ordering::Relaxed)
-            } else {
-                255
-            },
-        };
-        let _ = self.background.try_send(Work {
+        let key = self.make_key(&document, page, width, dark);
+        if self.cache.lock().get(&key).is_some() {
+            return;
+        }
+        let (lock, condvar) = &*self.queue;
+        let mut state = lock.lock();
+        if state.stop || state.prefetch.iter().any(|work| work.key == key) {
+            return;
+        }
+        if state.prefetch.len() >= 6 {
+            state.prefetch.pop_front();
+        }
+        state.prefetch.push_back(Work {
             document,
             key,
             reply: None,
         });
+        condvar.notify_one();
     }
 }
 
@@ -368,22 +405,34 @@ impl NativeDocument {
         let pixmap = if let Some(theme) = theme {
             crate::document_theme::render(list, &matrix, theme)?
         } else {
-            list.to_pixmap(&matrix, &mupdf::Colorspace::device_bgr(), false)?
+            // Render directly into an opaque-white 4-channel BGRA pixmap to avoid
+            // a per-pixel 3-byte BGR -> 4-byte BGRA expansion copy.
+            let mut pixmap = mupdf::Pixmap::new_with_rect(
+                &mupdf::Colorspace::device_bgr(),
+                bounds.transform(&matrix).round(),
+                true,
+            )?;
+            pixmap.samples_mut().fill(255);
+            let target = mupdf::Device::from_pixmap(&pixmap)?;
+            list.run(&target, &matrix, mupdf::Rect::INF)?;
+            pixmap
         };
         anyhow::ensure!(
-            pixmap.n() == 3 && pixmap.width() > 0 && pixmap.height() > 0,
+            pixmap.n() == 4 && pixmap.width() > 0 && pixmap.height() > 0,
             "Unexpected MuPDF pixel format"
         );
-        let mut bytes = Vec::with_capacity(pixmap.width() as usize * pixmap.height() as usize * 4);
-        for row in pixmap
-            .samples()
-            .chunks(pixmap.stride() as usize)
-            .take(pixmap.height() as usize)
-        {
-            for pixel in row[..pixmap.width() as usize * 3].as_chunks::<3>().0 {
-                bytes.extend_from_slice(&[pixel[0], pixel[1], pixel[2], 255]);
+        let row_bytes = pixmap.width() as usize * 4;
+        let height = pixmap.height() as usize;
+        let stride = pixmap.stride() as usize;
+        let bytes = if stride == row_bytes {
+            pixmap.samples()[..row_bytes * height].to_vec()
+        } else {
+            let mut bytes = Vec::with_capacity(row_bytes * height);
+            for row in pixmap.samples().chunks(stride).take(height) {
+                bytes.extend_from_slice(&row[..row_bytes]);
             }
-        }
+            bytes
+        };
         image::RgbaImage::from_raw(pixmap.width(), pixmap.height(), bytes)
             .context("Invalid raster dimensions")
     }

@@ -10,6 +10,7 @@ use wayland_cursor::{CursorImageBuffer, CursorTheme};
 
 pub(crate) struct Cursor {
     loaded_theme: Option<LoadedTheme>,
+    theme_name: Option<String>,
     size: u32,
     scaled_size: u32,
     surface: WlSurface,
@@ -32,16 +33,15 @@ impl Drop for Cursor {
 
 impl Cursor {
     pub fn new(connection: &Connection, globals: &Globals, size: u32) -> Self {
-        let mut this = Self {
+        Self {
             loaded_theme: None,
+            theme_name: None,
             size,
             scaled_size: size,
             surface: globals.compositor.create_surface(&globals.qh, ()),
             shm: globals.shm.clone(),
             connection: connection.clone(),
-        };
-        this.set_theme_internal(None);
-        this
+        }
     }
 
     fn set_theme_internal(&mut self, theme_name: Option<String>) {
@@ -74,21 +74,25 @@ impl Cursor {
     }
 
     pub fn set_theme(&mut self, theme_name: String) {
-        self.set_theme_internal(Some(theme_name));
+        self.theme_name = Some(theme_name.clone());
+        if self.loaded_theme.is_some() {
+            self.set_theme_internal(Some(theme_name));
+        }
     }
 
     fn set_scaled_size(&mut self, scaled_size: u32) {
         self.scaled_size = scaled_size;
-        let theme_name = self
-            .loaded_theme
-            .as_ref()
-            .and_then(|loaded_theme| loaded_theme.name.clone());
+        let theme_name = self.theme_name.clone();
         self.set_theme_internal(theme_name);
     }
 
     pub fn set_size(&mut self, size: u32) {
         self.size = size;
-        self.set_scaled_size(size);
+        self.scaled_size = size;
+        if self.loaded_theme.is_some() {
+            let theme_name = self.theme_name.clone();
+            self.set_theme_internal(theme_name);
+        }
     }
 
     pub fn set_icon(

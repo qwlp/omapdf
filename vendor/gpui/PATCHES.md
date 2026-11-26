@@ -17,11 +17,23 @@ The changes are in `src/platform/linux/wayland/client.rs` and
 real Wayland PNG offers and checks their decoded pixels against native exports.
 
 Startup: Wayland Vulkan device initialization now runs concurrently with
-display/keyboard setup. Cosmic Text discovers the complete host font database
-on a worker, joining on first text use before adding bundled fonts. This
-overlaps font discovery with Vulkan initialization without replacing the font
-database or invalidating font IDs after shaping begins. No font families or
-fallbacks are removed. Changes are in `wayland/client.rs` and `text_system.rs`.
+display/keyboard setup. Cosmic Text starts with an empty font database instead
+of scanning every installed system font file on startup, loading requested font
+families on demand via fontconfig's binary cache and falling back to a full
+system font scan only when needed for missing Unicode fallback glyphs or font
+listing. Wayland cursor themes are loaded lazily only when server-side cursor
+shapes are unavailable. Wayland XKB compose tables are loaded lazily on first
+non-modifier key press instead of blocking initial window configuration.
+Wayland windows with xdg-decoration support start with server-side opaque
+surfaces instead of compiling transparent pipelines and immediately recompiling
+opaque ones. Blade pipelines are compiled in parallel and cached per
+`(format, alpha, sample_count)` on `BladeContext`, skipping the macOS-only
+`surfaces` pipeline on Linux. Wayland and X11 `drop_window` no longer forcibly stop the event loop when the
+last window closes; application exit is controlled by `on_window_closed` /
+`cx.quit()`, enabling resident `--daemon` mode while preserving normal exit on
+last-window close. Changes are in `wayland/client.rs`, `x11/client.rs`,
+`wayland/cursor.rs`, `wayland/window.rs`, `blade/blade_context.rs`,
+`blade/blade_renderer.rs`, and `text_system.rs`.
 
 X11 startup: checked XCB round trips may buffer MapNotify/Expose while consuming
 the socket readiness notification. The client drains buffered events before the

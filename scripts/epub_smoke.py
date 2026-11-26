@@ -24,7 +24,7 @@ with tempfile.TemporaryDirectory(prefix='omapdf-context-') as temporary:
             time.sleep(.05)
         log.seek(0);raise AssertionError('timeout: '+log.read())
     try:
-        wait_for(lambda:library.exists() and bool(state().get('documents')))
+        wait_for(lambda:library.exists() and bool(state().get('documents')) and any(w.get('pid')==process.pid for w in json.loads(hypr('clients','-j'))))
         window=next(w for w in json.loads(hypr('clients','-j')) if w.get('pid')==process.pid)
         address='address:'+window['address'];dispatch('hl.dsp.focus({window='+json.dumps(address)+'})');time.sleep(.7)
         remote('search Compilation;add_highlight b;add_bookmark epub-anchor;close')

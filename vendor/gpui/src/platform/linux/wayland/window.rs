@@ -136,6 +136,11 @@ impl WaylandWindowState {
         gpu_context: &BladeContext,
         options: WindowParams,
     ) -> anyhow::Result<Self> {
+        let decorations = if decoration.is_some() {
+            WindowDecorations::Server
+        } else {
+            WindowDecorations::Client
+        };
         let renderer = {
             let raw_window = RawWindow {
                 window: surface.id().as_ptr().cast::<c_void>(),
@@ -152,7 +157,7 @@ impl WaylandWindowState {
                     height: options.bounds.size.height.0 as u32,
                     depth: 1,
                 },
-                transparent: true,
+                transparent: decorations == WindowDecorations::Client,
             };
             BladeRenderer::new(gpu_context, &raw_window, config)?
         };
@@ -173,7 +178,7 @@ impl WaylandWindowState {
             bounds: options.bounds,
             scale: 1.0,
             input_handler: None,
-            decorations: WindowDecorations::Client,
+            decorations,
             background_appearance: WindowBackgroundAppearance::Opaque,
             fullscreen: false,
             maximized: false,
@@ -433,6 +438,10 @@ impl WaylandWindowStatePtr {
             let request_frame_callback = !state.acknowledged_first_configure;
             if request_frame_callback {
                 state.acknowledged_first_configure = true;
+                crate::platform::linux::profile_startup(&format!(
+                    "first xdg_surface::Configure size={:?}",
+                    state.bounds.size
+                ));
                 drop(state);
                 self.frame();
             }

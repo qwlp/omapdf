@@ -27,3 +27,18 @@ pub(crate) use x11::*;
 pub(crate) type PlatformScreenCaptureFrame = scap::frame::Frame;
 #[cfg(not(all(feature = "screen-capture", any(feature = "wayland", feature = "x11"))))]
 pub(crate) type PlatformScreenCaptureFrame = ();
+
+pub(crate) fn profile_startup(event: &str) {
+    use std::{
+        sync::OnceLock,
+        time::Instant,
+    };
+    static ORIGIN: OnceLock<Option<Instant>> = OnceLock::new();
+    if let Some(origin) = *ORIGIN.get_or_init(|| {
+        std::env::var_os("OMAPDF_PROFILE_STARTUP")
+            .filter(|v| !v.is_empty() && v != "0")
+            .map(|_| Instant::now())
+    }) {
+        eprintln!("[gpui +{:.2}ms] {event}", origin.elapsed().as_secs_f64() * 1000.0);
+    }
+}

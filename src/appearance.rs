@@ -1,6 +1,6 @@
 //! Read Omarchy's active palette and font without changing desktop configuration.
 use gpui::{AssetSource, SharedString};
-use std::{collections::BTreeMap, sync::OnceLock, time::SystemTime};
+use std::{collections::BTreeMap, path::PathBuf, sync::OnceLock, time::SystemTime};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Appearance {
@@ -13,6 +13,7 @@ pub struct Appearance {
     pub selection: u32,
     pub border: u32,
     pub font: String,
+    font_file: Option<PathBuf>,
     font_stamp: Option<SystemTime>,
 }
 impl Default for Appearance {
@@ -27,11 +28,15 @@ impl Default for Appearance {
             selection: 0x292e42,
             border: 0x292e42,
             font: "JetBrainsMono NF".into(),
+            font_file: None,
             font_stamp: None,
         }
     }
 }
 impl Appearance {
+    pub fn font_file(&self) -> Option<&std::path::Path> {
+        self.font_file.as_deref()
+    }
     pub fn load() -> Self {
         // Resolve the host font once per process. The main thread starts this
         // during platform initialization; additional tabs only check for changes.
@@ -68,11 +73,15 @@ impl Appearance {
                 .env_remove("FONTCONFIG_FILE")
                 .env_remove("FONTCONFIG_PATH")
                 .env_remove("FONTCONFIG_SYSROOT")
-                .args(["monospace", "-f", "%{family}"])
+                .args(["monospace", "-f", "%{family}\n%{file}"])
                 .output()
                 && output.status.success()
             {
-                let font = String::from_utf8_lossy(&output.stdout)
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let mut lines = stdout.lines();
+                let font = lines
+                    .next()
+                    .unwrap_or("")
                     .split(',')
                     .next()
                     .unwrap_or("JetBrainsMono NF")
@@ -81,6 +90,11 @@ impl Appearance {
                 if !font.is_empty() {
                     next.font = font;
                 }
+                next.font_file = lines
+                    .next()
+                    .map(str::trim)
+                    .filter(|path| !path.is_empty())
+                    .map(PathBuf::from);
             }
             next.font_stamp = stamp;
         }

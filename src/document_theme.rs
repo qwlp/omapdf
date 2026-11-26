@@ -47,14 +47,15 @@ pub fn render(list: &DisplayList, matrix: &Matrix, theme: DocumentTheme) -> Resu
     let mut pixmap = Pixmap::new_with_rect(
         &Colorspace::device_bgr(),
         list.bounds().transform(matrix).round(),
-        false,
+        true,
     )?;
     let background = [
         theme.background as u8,
         (theme.background >> 8) as u8,
         (theme.background >> 16) as u8,
+        255,
     ];
-    for pixel in pixmap.samples_mut().as_chunks_mut::<3>().0 {
+    for pixel in pixmap.samples_mut().as_chunks_mut::<4>().0 {
         pixel.copy_from_slice(&background);
     }
     let errors = Rc::new(RefCell::new(None));

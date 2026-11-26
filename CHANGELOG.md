@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.11
+
+- Add a compact horizontal tab strip and a vertical sidebar option under Appearance.
+- Restore the main window’s tab order and active document when launched without a file.
+- Add Vim-style tab switching, tab closing, and menu navigation.
+- Add display-independent regression tests for session persistence and keyboard routing.
+
 ## 0.0.10
 
 - Use a pinned Mesa 25 backport built for Ubuntu 22.04 for the AppImage-only CPU

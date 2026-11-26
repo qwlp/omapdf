@@ -18,6 +18,7 @@ with tempfile.TemporaryDirectory(prefix='omapdf-multidoc-') as temporary:
     root = pathlib.Path(temporary)
     config = root/'config'; config.mkdir()
     library = root/'library.json'
+    preferences = config/'prefs_user.config'
     log = open(root/'gui.log', 'w+')
     paths = [str(pathlib.Path('examples/'+name).resolve()) for name in ['reading-lab.pdf', 'large-reading-lab.pdf']]
     base = [binary, '--library', str(library), '--config', str(config)]
@@ -31,7 +32,7 @@ with tempfile.TemporaryDirectory(prefix='omapdf-multidoc-') as temporary:
         end = time.monotonic()+20
         while time.monotonic()<end:
             if process.poll() is not None:
-                log.seek(0); raise AssertionError(log.read())
+                log.seek(0); raise AssertionError(f"Reader exited with status {process.returncode}: {log.read()}")
             if test(): return
             time.sleep(.1)
         pathlib.Path('/tmp/omapdf-multidoc-timeout.json').write_text(json.dumps(state(),indent=2)); log.seek(0); raise AssertionError('timeout: '+log.read())
@@ -43,7 +44,7 @@ with tempfile.TemporaryDirectory(prefix='omapdf-multidoc-') as temporary:
         time.sleep(.3)
     try:
         wait(lambda: len(state().get('documents', {})) == 2)
-        assert len(clients()) == 1
+        wait(lambda: len(clients()) == 1)
         focus(clients()[0]['address']); time.sleep(.5)
         remote('goto 3;add_bookmark second-tab')
         wait(lambda: any(b['name']=='second-tab' for b in state().get('bookmarks', [])))
@@ -58,6 +59,30 @@ with tempfile.TemporaryDirectory(prefix='omapdf-multidoc-') as temporary:
         remote('add_bookmark after-close')
         wait(lambda: any(b['name']=='after-close' for b in state().get('bookmarks', [])))
         assert next(b['location']['document'] for b in state()['bookmarks'] if b['name']=='after-close') == second
+        # Reopen, exercise the Vim tab bindings, then verify startup restoration.
+        remote('open '+paths[0])
+        session_path = library.with_suffix('.json.tabs.json')
+        def session():
+            return json.loads(session_path.read_text())
+        wait(lambda: session() == {'paths': paths[::-1], 'active': 1})
+        key('g', ''); key('t', '')
+        wait(lambda: session()['active'] == 0)
+        key('g', ''); key('t', 'SHIFT')
+        wait(lambda: session()['active'] == 1)
+        remote('set_preference horizontal_tabs 0')
+        wait(lambda: preferences.exists() and 'horizontal_tabs 0' in preferences.read_text())
+        remote('quit'); process.wait(timeout=10)
+        process = subprocess.Popen(base, stdout=log, stderr=subprocess.STDOUT, env=environment)
+        wait(lambda: len(clients()) == 1)
+        remote('add_bookmark restored-active')
+        wait(lambda: any(b['name']=='restored-active' for b in state()['bookmarks']))
+        assert next(b['location']['document'] for b in state()['bookmarks'] if b['name']=='restored-active') == first
+        remote('layout_menu'); time.sleep(.3)
+        key('j', ''); key('Return', '')
+        wait(lambda: preferences.exists() and 'page_layout spread' in preferences.read_text())
+        remote('set_preference page_layout single;set_preference horizontal_tabs 1')
+        key('g', ''); key('q', '')
+        wait(lambda: session() == {'paths': [paths[1]], 'active': 0})
         # Continuations belong to the destination reader, including repeated CLI commands and nested opens.
         remote('open '+paths[0]+';goto 4;add_bookmark ordered-open')
         wait(lambda:any(b['name']=='ordered-open' for b in state()['bookmarks']))
@@ -74,7 +99,7 @@ with tempfile.TemporaryDirectory(prefix='omapdf-multidoc-') as temporary:
         target=next(b['location'] for b in state()['bookmarks'] if b['name']=='nested-final')
         assert target['document']==second and target['page']==5
         remote('set_preference open_in_new_windows 1')
-        wait(lambda: (config/'prefs_user.config').exists() and 'open_in_new_windows 1' in (config/'prefs_user.config').read_text())
+        wait(lambda: preferences.exists() and 'open_in_new_windows 1' in preferences.read_text())
         remote('open '+paths[0]+';goto 7;add_bookmark ordered-window')
         wait(lambda: len(clients()) == 2 and any(b['name']=='ordered-window' for b in state()['bookmarks']))
         target=next(b['location'] for b in state()['bookmarks'] if b['name']=='ordered-window')
@@ -87,7 +112,7 @@ with tempfile.TemporaryDirectory(prefix='omapdf-multidoc-') as temporary:
         wait(lambda: len(clients()) == 2)
         remote('quit'); process.wait(timeout=10)
         assert process.returncode == 0
-        print('PASS: multi-file startup, tab switch/close, independent positions, bookmarks preserved, ordered open/repeated-command/nested-open/new-window continuations, saved window mode')
+        print('PASS: multi-file startup, vertical and horizontal tabs, Vim tab and layout-menu navigation, session restore, independent positions, ordered command continuations, saved window mode')
     finally:
         if process.poll() is None: process.terminate(); process.wait(timeout=5)
         if prior: focus(prior)

@@ -73,6 +73,35 @@ struct UnlockRequest {
     record: bool,
 }
 
+fn menu_keystroke(
+    original: &Keystroke,
+    popup: bool,
+    prompt: Option<Prompt>,
+    panel: Option<Panel>,
+) -> Keystroke {
+    let mut key = original.clone();
+    if original.modifiers.alt || original.modifiers.platform {
+        return key;
+    }
+    let list = original.modifiers.control
+        && matches!(
+            prompt,
+            Some(Prompt::Command | Prompt::Filter | Prompt::Search)
+        );
+    let outline = list && prompt == Some(Prompt::Filter) && panel == Some(Panel::Toc);
+    key.key = match original.key.as_str() {
+        "j" if popup || list => "down",
+        "k" if popup || list => "up",
+        "h" if outline && !popup => "left",
+        "l" if outline && !popup => "right",
+        _ => return key,
+    }
+    .into();
+    key.modifiers.control = false;
+    key.key_char = None;
+    key
+}
+
 pub struct Reader {
     focus: FocusHandle,
     window: AnyWindowHandle,
@@ -93,6 +122,7 @@ pub struct Reader {
     requests: std::sync::mpsc::Receiver<omapdf::ipc::Request>,
     pub opens: Option<std::sync::mpsc::Sender<omapdf::ipc::Request>>,
     loading: bool,
+    loading_path: Option<PathBuf>,
     fit_height: bool,
     dark: bool,
     library: Library,
@@ -138,6 +168,7 @@ pub struct Reader {
     search_jump_pending: bool,
     geometry: Option<PageLayout>,
     layout_menu: bool,
+    layout_index: usize,
     tracking_scroll: bool,
     scrollbar_grab: Option<f32>,
     scroll_save_pending: bool,
@@ -277,6 +308,7 @@ impl Reader {
             requests,
             opens: None,
             loading: false,
+            loading_path: None,
             fit_height: false,
             library_baseline: library.clone(),
             library,
@@ -321,6 +353,7 @@ impl Reader {
             search_jump_pending: false,
             geometry: None,
             layout_menu: false,
+            layout_index: 0,
             tracking_scroll: false,
             scrollbar_grab: None,
             scroll_save_pending: false,
@@ -667,6 +700,7 @@ impl Reader {
         self.search_busy = false;
         self.search_error = None;
         self.loading = true;
+        self.loading_path = Some(path.clone());
         self.context_menu = None;
         self.zoom_anchor = None;
         self.page_bounds.clear();
@@ -732,6 +766,7 @@ impl Reader {
                     return;
                 }
                 this.loading = false;
+                this.loading_path = None;
                 match result {
                     Ok(doc) => {
                         if record && let Some(location) = this.location() {
@@ -941,6 +976,24 @@ impl Reader {
         self.startup_commands.extend(request.commands);
     }
 
+    pub fn horizontal_tabs(&self) -> bool {
+        self.config.horizontal_tabs
+    }
+
+    fn tab_insets(&self) -> Size<Pixels> {
+        if self.horizontal_tabs() {
+            size(px(0.), px(crate::workspace::TAB_BAR_HEIGHT))
+        } else {
+            size(px(crate::workspace::TAB_SIDEBAR_WIDTH), px(0.))
+        }
+    }
+
+    fn reader_viewport(&self, window: &Window) -> Size<Pixels> {
+        let size = window.viewport_size();
+        let insets = self.tab_insets();
+        gpui::size(size.width - insets.width, size.height - insets.height)
+    }
+
     pub fn ui_appearance(&self) -> (&Appearance, f32) {
         (&self.appearance, self.config.font_size)
     }
@@ -949,12 +1002,17 @@ impl Reader {
         self.document.is_none() && !self.loading && self.pending_unlock.is_none()
     }
 
-    pub fn tab_title(&self) -> String {
-        self.document
+    pub fn tab_path(&self) -> Option<&PathBuf> {
+        self.loading_path
             .as_ref()
-            .map(|d| {
-                d.path
-                    .file_name()
+            .or_else(|| self.pending_unlock.as_ref().map(|request| &request.path))
+            .or_else(|| self.document.as_ref().map(|document| &document.path))
+    }
+
+    pub fn tab_title(&self) -> String {
+        self.tab_path()
+            .map(|path| {
+                path.file_name()
                     .unwrap_or_default()
                     .to_string_lossy()
                     .into_owned()
@@ -2919,6 +2977,9 @@ impl Reader {
             self.tracking_scroll = false;
         }
         match name {
+            "next_tab" => window.dispatch_action(Box::new(crate::workspace::NextTab), cx),
+            "previous_tab" => window.dispatch_action(Box::new(crate::workspace::PreviousTab), cx),
+            "close_tab" => window.dispatch_action(Box::new(crate::workspace::CloseTab), cx),
             "select_rect" => self.begin_region(RegionAction::Select, cx),
             "copy_image" | "copy_screenshot_to_clipboard" => {
                 self.capture_region(RegionAction::Copy, cx)
@@ -3519,7 +3580,13 @@ impl Reader {
                     self.open_context(page, position, cx);
                 }
             }
-            "layout_menu" => self.layout_menu = !self.layout_menu,
+            "layout_menu" => {
+                self.layout_menu = !self.layout_menu;
+                self.layout_index = LayoutMode::ALL
+                    .iter()
+                    .position(|mode| *mode == self.config.layout)
+                    .unwrap_or(0);
+            }
             "cycle_layout" => {
                 let next = self.config.layout.next();
                 self.change_setting("page_layout", next.name(), cx);
@@ -3565,8 +3632,14 @@ impl Reader {
     }
 
     fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let key = menu_keystroke(
+            &event.keystroke,
+            self.context_menu.is_some() || self.layout_menu,
+            self.prompt,
+            self.panel,
+        );
         if self.context_menu.is_some() {
-            let key = &event.keystroke.key;
+            let key = &key.key;
             if key == "escape" {
                 self.context_menu = None;
                 cx.stop_propagation();
@@ -3599,14 +3672,26 @@ impl Reader {
             self.context_menu = None;
             cx.notify();
         }
-        let key = &event.keystroke;
+        let key = &key;
         let text = key.key_char.as_deref().unwrap_or(&key.key);
         if self.region_mode && key.key != "escape" {
             cx.stop_propagation();
             return;
         }
-        if key.key == "escape" && self.layout_menu {
-            self.layout_menu = false;
+        if self.layout_menu {
+            let length = LayoutMode::ALL.len();
+            match key.key.as_str() {
+                "up" => self.layout_index = (self.layout_index + length - 1) % length,
+                "down" => self.layout_index = (self.layout_index + 1) % length,
+                "enter" => self.change_setting(
+                    "page_layout",
+                    LayoutMode::ALL[self.layout_index].name(),
+                    cx,
+                ),
+                "escape" => self.layout_menu = false,
+                _ => return,
+            }
+            cx.stop_propagation();
             cx.notify();
             return;
         }
@@ -3659,7 +3744,7 @@ impl Reader {
             return;
         }
         if let Some(prompt) = self.prompt {
-            if prompt == Prompt::Command && self.command_key(&event.keystroke, cx) {
+            if prompt == Prompt::Command && self.command_key(key, cx) {
                 cx.stop_propagation();
                 cx.notify();
                 return;
@@ -4752,8 +4837,8 @@ impl Reader {
         self.layout_menu = false;
         self.context_scroll.set_offset(point(px(0.), px(0.)));
         self.context_menu = Some(MenuState {
-            x: f32::from(position.x),
-            y: f32::from(position.y),
+            x: f32::from(position.x - self.tab_insets().width),
+            y: f32::from(position.y - self.tab_insets().height),
             page,
             word,
             link,
@@ -4944,10 +5029,8 @@ impl Reader {
             })
             .sum::<f32>()
             + 8.;
-        let viewport = [
-            f32::from(window.viewport_size().width),
-            f32::from(window.viewport_size().height),
-        ];
+        let viewport = self.reader_viewport(window);
+        let viewport = [f32::from(viewport.width), f32::from(viewport.height)];
         let [x, y] = menu.position(viewport, height);
         let theme = &self.appearance;
         div()
@@ -6109,7 +6192,8 @@ impl Reader {
     }
 
     fn panel_dialog(&self, opacity: f32, window: &Window, cx: &mut Context<Self>) -> AnyElement {
-        let width = (f32::from(window.viewport_size().width) - 48.).clamp(180., 720.);
+        let viewport = self.reader_viewport(window);
+        let width = (f32::from(viewport.width) - 48.).clamp(180., 720.);
         let preferred_height = if self.presented_panel == Some(Panel::Toc) {
             self.document
                 .as_ref()
@@ -6118,8 +6202,7 @@ impl Reader {
         } else {
             640.
         };
-        let height =
-            (f32::from(window.viewport_size().height) - 120.).clamp(120., preferred_height);
+        let height = (f32::from(viewport.height) - 120.).clamp(120., preferred_height);
         div()
             .id("panel-backdrop")
             .absolute()
@@ -6231,10 +6314,11 @@ impl Render for Reader {
             self.presented_preview = None;
         }
         let padding = self.config.page_padding;
-        let available = (f32::from(window.viewport_size().width) - padding * 2.).max(150.);
+        let viewport = self.reader_viewport(window);
+        let available = (f32::from(viewport.width) - padding * 2.).max(150.);
         let mode = self.config.layout;
-        let viewport_width = (f32::from(window.viewport_size().width)).max(150.);
-        let viewport_height = (f32::from(window.viewport_size().height) - 66.).max(100.);
+        let viewport_width = f32::from(viewport.width).max(150.);
+        let viewport_height = (f32::from(viewport.height) - 36.).max(100.);
         let columns = if mode == LayoutMode::Spread { 2. } else { 1. };
         let gap = 16.;
         let page_available = ((available - (columns - 1.) * gap) / columns).max(100.);
@@ -6739,7 +6823,7 @@ impl Render for Reader {
                         .on_any_mouse_down(|_, _, cx| cx.stop_propagation())
                         .opacity(layout_opacity)
                         .on_mouse_down_out(cx.listener(|this, event: &MouseDownEvent, _, cx| {
-                            if event.position.y > px(36.) {
+                            if event.position.y > px(36.) + this.tab_insets().height {
                                 this.layout_menu = false;
                                 cx.notify();
                             }
@@ -6769,7 +6853,7 @@ impl Render for Reader {
                                         .flex()
                                         .items_center()
                                         .justify_between()
-                                        .when(mode == self.config.layout, |div| {
+                                        .when(index == self.layout_index, |div| {
                                             div.bg(rgb(self.appearance.selection))
                                                 .text_color(rgb(self.appearance.accent))
                                         })
@@ -7214,5 +7298,41 @@ impl EntityInputHandler for Reader {
         _: &mut Context<Self>,
     ) -> Option<usize> {
         Some(self.input.text.encode_utf16().count())
+    }
+}
+
+#[cfg(test)]
+mod keyboard_tests {
+    use super::{Panel, Prompt, menu_keystroke};
+    use gpui::Keystroke;
+
+    #[test]
+    fn vim_menu_keys_preserve_text_input_and_normal_mode() {
+        for (input, popup, prompt, panel, expected) in [
+            ("j", true, None, None, "down"),
+            ("k", true, None, None, "up"),
+            ("j", false, None, None, "j"),
+            ("j", false, Some(Prompt::Filter), Some(Panel::Toc), "j"),
+            ("ctrl-j", false, Some(Prompt::Command), None, "down"),
+            ("ctrl-k", false, Some(Prompt::Search), None, "up"),
+            (
+                "ctrl-h",
+                false,
+                Some(Prompt::Filter),
+                Some(Panel::Toc),
+                "left",
+            ),
+            (
+                "ctrl-l",
+                false,
+                Some(Prompt::Filter),
+                Some(Panel::Toc),
+                "right",
+            ),
+            ("ctrl-j", false, Some(Prompt::Password), None, "j"),
+        ] {
+            let key = Keystroke::parse(input).unwrap();
+            assert_eq!(menu_keystroke(&key, popup, prompt, panel).key, expected);
+        }
     }
 }

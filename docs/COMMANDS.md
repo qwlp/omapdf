@@ -12,6 +12,7 @@ These commands are available in the palette, keybindings and `--execute-command`
 | `clear_status_string` | Clear the message in Omapdf's statusbar. |
 | `close` | Dismiss the current dialog, menu or preview. |
 | `close_overview` | Close the overview window. |
+| `close_tab` | Close the active document tab. |
 | `close_visual_mark` | Exit the visual mark (ruler) mode. |
 | `close_window` | Close the current window. |
 | `collapse_toc` | Collapse every branch in the table of contents. |
@@ -84,6 +85,7 @@ These commands are available in the palette, keybindings and `--execute-command`
 | `next_match` | Jump to the next document search result. |
 | `next_page` | Navigate to the next/previous page. |
 | `next_state` | Go forward/backward in history. |
+| `next_tab` | Switch to the next document tab. |
 | `open` | Open a PDF or EPUB path in another tab or window. |
 | `open_document` | Open the file browser to open a document. |
 | `open_path` | Enter the path of a document to open. |
@@ -100,6 +102,7 @@ These commands are available in the palette, keybindings and `--execute-command`
 | `previous_item` | Jump to the previous document search result. |
 | `previous_match` | Jump to the previous document search result. |
 | `previous_page` | Navigate to the next/previous page. |
+| `previous_tab` | Switch to the previous document tab. |
 | `q` | Quit Omapdf (closes all windows). |
 | `quit` | Quit Omapdf (closes all windows). |
 | `recent` | Choose a recently opened document. |

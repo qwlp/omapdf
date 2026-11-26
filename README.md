@@ -28,10 +28,10 @@ chmod +x omapdf-linux-x86_64
 ./omapdf-linux-x86_64 paper.pdf
 ```
 
-Release AppImages use names such as `Omapdf-0.0.10-x86_64.AppImage`.
+Release AppImages use names such as `Omapdf-0.0.11-x86_64.AppImage`.
 Mark the file executable and launch it; if FUSE is unavailable, run it with
 `--appimage-extract-and-run`. SHA-256 checksum files accompany every download.
-The current version is **0.0.10**.
+The current version is **0.0.11**.
 
 Both forms run on Linux Wayland or X11 desktops and prefer your host GPU drivers.
 The standalone executable requires a working host Vulkan driver. The AppImage
@@ -205,6 +205,11 @@ xdg-mime default io.omapdf.desktop application/pdf
 | `Backspace` | Previous location |
 | `Ctrl+o` / `o` | File chooser / enter a path |
 | `O` | Recent documents |
+| `gt` / `gT` | Next / previous document tab |
+| `gq` / `Ctrl+w` | Close the current tab |
+| `j` / `k` | Move down / up in context and page layout menus |
+| `Ctrl+j` / `Ctrl+k` | Move down / up in filtered lists, search results, and command completions |
+| `Ctrl+h` / `Ctrl+l` | Collapse / expand the selected table of contents branch |
 | `:` / `Ctrl+p` | Command prompt / palette |
 | `Ctrl+,` | Settings |
 | `F7` / `F8` / `F11` | Visual scrolling / dark mode / fullscreen |
@@ -212,6 +217,12 @@ xdg-mime default io.omapdf.desktop application/pdf
 
 See [default keybindings](assets/keys.config) and the
 [command reference](docs/COMMANDS.md) for more actions.
+
+Document tabs run along the top by default. Turn off **Settings →
+Appearance → Horizontal tabs** to move them to the left sidebar. Launch Omapdf without a file to
+restore the main window’s tabs and active document. Launching with file
+arguments starts with those documents. Tabs opened in separate windows are
+outside the saved tab session.
 
 ## Configuration and library
 
@@ -221,6 +232,7 @@ Omapdf uses the XDG directories:
 | --- | --- |
 | Configuration | `~/.config/omapdf/` |
 | Reading history and annotations | `~/.local/share/omapdf/library.json` |
+| Tab session | `~/.local/share/omapdf/library.json.tabs.json` |
 | Portable runtime | `~/.cache/omapdf/runtime/` |
 
 Preferences load from `prefs.config`, then `prefs_user.config`; keybindings load
@@ -301,6 +313,12 @@ and verifies that a visible X11 window survives startup. Desktop interaction smo
 tests run separately on a real Wayland/Hyprland session.
 
 ## Development
+
+Run `cargo test --locked` for display-independent regression tests. Tab
+sessions use temporary files and keyboard tests feed synthetic keystrokes into
+the reader’s shortcut handling. To run just these tests, use
+`cargo test --locked --bin omapdf`. The Wayland smoke scripts cover compositor
+behavior and pointer interactions that require a real window.
 
 ```sh
 cargo fmt --all --check

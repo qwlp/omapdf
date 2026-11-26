@@ -23,6 +23,13 @@ pub const SETTINGS: &[Setting] = &[
         kind: Kind::Toggle,
     },
     Setting {
+        key: "horizontal_tabs",
+        title: "Horizontal tabs",
+        description: "Place document tabs along the top of the window",
+        section: "Appearance",
+        kind: Kind::Toggle,
+    },
+    Setting {
         key: "rounded_corners",
         title: "Rounded corners",
         description: "Smooth rounded dialogs, menus, controls and single pages",

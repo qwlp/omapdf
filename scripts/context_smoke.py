@@ -60,7 +60,7 @@ with tempfile.TemporaryDirectory(prefix='omapdf-context-') as temporary:
         remote('goto 1;fit_to_page_width');time.sleep(.4)
         key('Escape')
         window=next(w for w in json.loads(hypr('clients','-j')) if w.get('pid')==process.pid)
-        x,y=window['at'];dispatch('hl.dsp.cursor.move({x='+str(x+80)+',y='+str(y+90)+'})');time.sleep(.1)
+        x,y=window['at'];dispatch('hl.dsp.cursor.move({x='+str(x+80)+',y='+str(y+92)+'})');time.sleep(.1)
         key('mouse:273')
         time.sleep(.2)
         key('Return')
